@@ -21,6 +21,7 @@ class S3Client {
   final String secretKey;
   final bool useSSL;
   final int? port;
+  final bool virtualHostedStyle;
 
   late final S3SignatureV4 _signer;
   late final String _baseUrl;
@@ -33,6 +34,7 @@ class S3Client {
     required this.secretKey,
     this.useSSL = true,
     this.port,
+    this.virtualHostedStyle = false,
   }) {
     _signer = S3SignatureV4(
       accessKey: accessKey,
@@ -47,6 +49,9 @@ class S3Client {
     _httpClient = http.Client();
   }
 
+  String _bucketUrl(String bucket) =>
+      virtualHostedStyle ? _baseUrl : '$_baseUrl/$bucket';
+
   /// 释放资源
   void dispose() {
     _httpClient.close();
@@ -59,7 +64,7 @@ class S3Client {
     required Uint8List data,
     String? contentType,
   }) async {
-    final uri = Uri.parse('$_baseUrl/$bucket/${_encodeKey(key)}');
+    final uri = Uri.parse('${_bucketUrl(bucket)}/${_encodeKey(key)}');
 
     var headers = <String, String>{
       'Host': endpoint,
@@ -94,7 +99,7 @@ class S3Client {
     required String bucket,
     required String key,
   }) async {
-    final uri = Uri.parse('$_baseUrl/$bucket/${_encodeKey(key)}');
+    final uri = Uri.parse('${_bucketUrl(bucket)}/${_encodeKey(key)}');
 
     var headers = <String, String>{
       'Host': endpoint,
@@ -130,7 +135,7 @@ class S3Client {
     required String bucket,
     required String key,
   }) async {
-    final uri = Uri.parse('$_baseUrl/$bucket/${_encodeKey(key)}');
+    final uri = Uri.parse('${_bucketUrl(bucket)}/${_encodeKey(key)}');
 
     var headers = <String, String>{
       'Host': endpoint,
@@ -164,7 +169,7 @@ class S3Client {
     required String bucket,
     required String key,
   }) async {
-    final uri = Uri.parse('$_baseUrl/$bucket/${_encodeKey(key)}');
+    final uri = Uri.parse('${_bucketUrl(bucket)}/${_encodeKey(key)}');
 
     var headers = <String, String>{
       'Host': endpoint,
@@ -199,7 +204,7 @@ class S3Client {
       queryParams['prefix'] = prefix;
     }
 
-    final uri = Uri.parse('$_baseUrl/$bucket').replace(queryParameters: queryParams);
+    final uri = Uri.parse(_bucketUrl(bucket)).replace(queryParameters: queryParams);
 
     var headers = <String, String>{
       'Host': endpoint,
@@ -247,6 +252,57 @@ class S3Client {
       // XML 解析失败，返回空列表
       return [];
     }
+  }
+
+  /// Full listing used only by S3 collaboration journals.
+  Future<List<String>> listObjectsAllPages({
+    required String bucket,
+    String? prefix,
+  }) async {
+    final keys = <String>[];
+    String? continuationToken;
+    do {
+      final queryParams = <String, String>{'list-type': '2'};
+      if (prefix != null && prefix.isNotEmpty) queryParams['prefix'] = prefix;
+      if (continuationToken != null) {
+        queryParams['continuation-token'] = continuationToken;
+      }
+      final uri = Uri.parse(_bucketUrl(bucket))
+          .replace(queryParameters: queryParams);
+      final headers = _signer.sign(
+        method: 'GET',
+        uri: uri,
+        headers: <String, String>{'Host': endpoint},
+      );
+      try {
+        final response = await _httpClient.get(uri, headers: headers);
+        if (response.statusCode == 404) {
+          throw S3BucketNotFoundException(bucket);
+        }
+        if (response.statusCode != 200) {
+          _handleError('ListObjects', response);
+        }
+        final document = XmlDocument.parse(response.body);
+        keys.addAll(document.findAllElements('Contents').map((element) =>
+            element.findElements('Key').first.innerText));
+        final truncated = document.findAllElements('IsTruncated').firstOrNull
+                ?.innerText.toLowerCase() ==
+            'true';
+        continuationToken = truncated
+            ? document.findAllElements('NextContinuationToken').firstOrNull
+                ?.innerText
+            : null;
+        if (truncated && (continuationToken == null || continuationToken.isEmpty)) {
+          throw S3Exception('ListObjects response is truncated without a continuation token');
+        }
+      } on SocketException catch (e) {
+        throw S3NetworkException('Network error: ${e.message}', originalException: e);
+      } catch (e) {
+        if (e is S3Exception) rethrow;
+        throw S3Exception('ListObjects failed: $e', originalException: e as Exception?);
+      }
+    } while (continuationToken != null);
+    return keys;
   }
 
   /// URL 编码 Key（保留 /）

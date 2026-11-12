@@ -73,6 +73,7 @@ class S3Provider implements CloudProvider {
       secretKey: secretKey,
       useSSL: useSSL,
       port: finalPort,
+      virtualHostedStyle: config['collaborationVirtualHosted'] == true,
     );
 
     _bucket = bucket;
@@ -100,7 +101,8 @@ class S3Provider implements CloudProvider {
 
     // 初始化服务
     _authService = S3AuthService(_client!, _bucket!);
-    _storageService = S3StorageService(_client!, _bucket!);
+    _storageService = S3StorageService(_client!, _bucket!,
+        paginateListings: config['collaborationPagination'] == true);
   }
 
   @override

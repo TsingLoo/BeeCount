@@ -17,6 +17,7 @@ import '../cloud/sync/sync_coordinator.dart';
 import '../cloud/sync/sync_engine.dart';
 import '../cloud/sync/sync_providers.dart' as sync_p;
 import '../cloud/transactions_sync_manager.dart';
+import '../cloud/s3_incremental_sync_manager.dart';
 import '../models/ledger_display_item.dart';
 import '../ai/providers/ai_provider_manager.dart';
 import '../pages/ai/ai_provider_manage_page.dart'
@@ -147,6 +148,12 @@ final s3ConfigProvider = FutureProvider<CloudServiceConfig?>((ref) async {
   return store.loadS3();
 });
 
+final s3CollaborationConfigProvider =
+    FutureProvider<CloudServiceConfig?>((ref) async {
+  final store = ref.watch(cloudServiceStoreProvider);
+  return store.loadS3Collaboration();
+});
+
 typedef CloudServicesFactory = Future<
     ({CloudProvider? provider, CloudAuthService? auth})> Function(
   CloudServiceConfig config,
@@ -234,6 +241,7 @@ class ActiveCloudRuntime {
         fields['remotePath'] = config.webdavRemotePath;
         break;
       case CloudBackendType.s3:
+      case CloudBackendType.s3Collaboration:
         fields['endpoint'] = config.s3Endpoint;
         fields['region'] = config.s3Region;
         fields['accessKey'] = config.s3AccessKey;
@@ -241,6 +249,9 @@ class ActiveCloudRuntime {
         fields['bucket'] = config.s3Bucket;
         fields['useSSL'] = config.s3UseSSL;
         fields['port'] = config.s3Port;
+        if (config.type == CloudBackendType.s3Collaboration) {
+          fields['syncPassword'] = config.s3SyncPassword;
+        }
         break;
     }
     return sha256
@@ -372,6 +383,9 @@ class ActiveCloudRuntimeController extends AsyncNotifier<ActiveCloudRuntime?> {
       case CloudBackendType.s3:
         ref.invalidate(s3ConfigProvider);
         break;
+      case CloudBackendType.s3Collaboration:
+        ref.invalidate(s3CollaborationConfigProvider);
+        break;
     }
   }
 
@@ -469,7 +483,14 @@ class ActiveCloudRuntimeController extends AsyncNotifier<ActiveCloudRuntime?> {
         config: config,
         provider: provider,
         auth: auth,
-        syncService: TransactionsSyncManager(
+        syncService: config.type == CloudBackendType.s3Collaboration
+            ? S3IncrementalSyncManager(
+                config: config,
+                db: db,
+                repo: repo,
+                provider: provider,
+              )
+            : TransactionsSyncManager(
           config: config,
           db: db,
           repo: repo,

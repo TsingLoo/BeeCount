@@ -10,6 +10,7 @@ class CloudServiceStore {
   static const _kSupabaseCfg = 'cloud_supabase_cfg';
   static const _kWebdavCfg = 'cloud_webdav_cfg';
   static const _kS3Cfg = 'cloud_s3_cfg';
+  static const _kS3CollaborationCfg = 'cloud_s3_collaboration_cfg';
 
   /// 加载当前激活的云服务配置
   Future<CloudServiceConfig> loadActive() async {
@@ -74,6 +75,15 @@ class CloudServiceStore {
         // 回退到本地存储
         return CloudServiceConfig.localStorage();
 
+      case 's3Collaboration':
+        final raw = sp.getString(_kS3CollaborationCfg);
+        if (raw != null) {
+          try {
+            return decodeCloudConfig(raw);
+          } catch (_) {}
+        }
+        return CloudServiceConfig.localStorage();
+
       default:
         return CloudServiceConfig.localStorage();
     }
@@ -127,6 +137,18 @@ class CloudServiceStore {
     }
   }
 
+  /// 增量协同单独保存，不读取或覆盖旧 S3 备份配置。
+  Future<CloudServiceConfig?> loadS3Collaboration() async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_kS3CollaborationCfg);
+    if (raw == null) return null;
+    try {
+      return decodeCloudConfig(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 保存并激活配置
   Future<void> saveAndActivate(CloudServiceConfig cfg) async {
     final sp = await SharedPreferences.getInstance();
@@ -164,6 +186,11 @@ class CloudServiceStore {
         await sp.setString(_kActiveType, 's3');
         // Provider 会在下次使用时自动初始化
         break;
+
+      case CloudBackendType.s3Collaboration:
+        await sp.setString(_kS3CollaborationCfg, encodeCloudConfig(cfg));
+        await sp.setString(_kActiveType, 's3Collaboration');
+        break;
     }
   }
 
@@ -194,6 +221,10 @@ class CloudServiceStore {
 
       case CloudBackendType.s3:
         await sp.setString(_kS3Cfg, encodeCloudConfig(cfg));
+        break;
+
+      case CloudBackendType.s3Collaboration:
+        await sp.setString(_kS3CollaborationCfg, encodeCloudConfig(cfg));
         break;
     }
   }
@@ -257,6 +288,18 @@ class CloudServiceStore {
           await sp.setString(_kActiveType, 's3');
           return true;
         } catch (e) {
+          return false;
+        }
+
+      case CloudBackendType.s3Collaboration:
+        final raw = sp.getString(_kS3CollaborationCfg);
+        if (raw == null) return false;
+        try {
+          final cfg = decodeCloudConfig(raw);
+          if (cfg.type != type || !cfg.valid) return false;
+          await sp.setString(_kActiveType, 's3Collaboration');
+          return true;
+        } catch (_) {
           return false;
         }
     }

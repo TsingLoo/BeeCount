@@ -8,6 +8,7 @@ enum CloudBackendType {
   webdav, // WebDAV (坚果云、Nextcloud、群晖等)
   icloud, // iCloud (iOS only)
   s3, // S3 协议（AWS S3、Cloudflare R2、MinIO等）
+  s3Collaboration, // S3 增量协同；与旧 S3 快照备份独立
 }
 
 class CloudServiceConfig {
@@ -41,6 +42,7 @@ class CloudServiceConfig {
   final String? s3Bucket;
   final bool? s3UseSSL;
   final int? s3Port;
+  final String? s3SyncPassword;
 
   const CloudServiceConfig({
     required this.type,
@@ -69,6 +71,7 @@ class CloudServiceConfig {
     this.s3Bucket,
     this.s3UseSSL,
     this.s3Port,
+    this.s3SyncPassword,
   });
 
   String get id => type.name; // 使用类型作为id
@@ -93,6 +96,12 @@ class CloudServiceConfig {
             (s3AccessKey?.isNotEmpty ?? false) &&
             (s3SecretKey?.isNotEmpty ?? false) &&
             (s3Bucket?.isNotEmpty ?? false);
+      case CloudBackendType.s3Collaboration:
+        return (s3Endpoint?.isNotEmpty ?? false) &&
+            (s3AccessKey?.isNotEmpty ?? false) &&
+            (s3SecretKey?.isNotEmpty ?? false) &&
+            (s3Bucket?.isNotEmpty ?? false) &&
+            (s3SyncPassword?.isNotEmpty ?? false);
     }
   }
 
@@ -123,6 +132,7 @@ class CloudServiceConfig {
         's3Bucket': s3Bucket,
         's3UseSSL': s3UseSSL,
         's3Port': s3Port,
+        's3SyncPassword': s3SyncPassword,
       };
 
   static CloudServiceConfig fromJson(Map<String, dynamic> j) {
@@ -160,6 +170,7 @@ class CloudServiceConfig {
       s3Bucket: j['s3Bucket'] as String?,
       s3UseSSL: j['s3UseSSL'] as bool?,
       s3Port: j['s3Port'] as int?,
+      s3SyncPassword: j['s3SyncPassword'] as String?,
     );
   }
 
@@ -214,6 +225,7 @@ class CloudServiceConfig {
         return 'iCloud Drive';
 
       case CloudBackendType.s3:
+      case CloudBackendType.s3Collaboration:
         if (s3Endpoint == null || s3Endpoint!.isEmpty) {
           return '__NOT_CONFIGURED__';
         }

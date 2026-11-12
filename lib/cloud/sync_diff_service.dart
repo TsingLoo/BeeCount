@@ -280,6 +280,7 @@ class SyncDiffService {
     required int ledgerId,
     required List<SyncChange> selectedChanges,
     required ImportData importData,
+    bool recordChanges = true,
   }) async {
     if (selectedChanges.isEmpty) {
       return const SyncApplyResult();
@@ -336,6 +337,7 @@ class SyncDiffService {
         accountNameToId: accountNameToId,
         categoryCache: categoryCache,
         tagNameToId: tagNameToId,
+        recordChanges: recordChanges,
       );
       addedCount = result.inserted;
     }
@@ -370,7 +372,8 @@ class SyncDiffService {
       }
       try {
         final syncIdToTxId =
-            await repo.updateTransactionsBatchBySyncId(updates);
+            await repo.updateTransactionsBatchBySyncId(
+                updates, recordChanges: recordChanges);
         modifiedCount = syncIdToTxId.length;
         // tag 关联逐条 update(tag 数量通常很小,这里没批量接口)
         for (final entry in tagIdsBySyncId.entries) {
@@ -408,7 +411,8 @@ class SyncDiffService {
       if (withSyncIds.isNotEmpty) {
         try {
           final n =
-              await repo.deleteTransactionsBatchBySyncIds(withSyncIds);
+              await repo.deleteTransactionsBatchBySyncIds(
+                  withSyncIds, recordChanges: recordChanges);
           deletedCount += n;
           logger.info('SyncDiff',
               '批量删除: syncId 路径 size=${withSyncIds.length} 实删=$n');

@@ -85,6 +85,7 @@ Future<({CloudProvider? provider, CloudAuthService? auth})> createCloudServices(
       }
 
     case CloudBackendType.s3:
+    case CloudBackendType.s3Collaboration:
       // S3 初始化 - 不捕获异常，让错误向上传递以便调试
       final provider = S3Provider();
       await _initializeProvider(provider, {
@@ -95,6 +96,9 @@ Future<({CloudProvider? provider, CloudAuthService? auth})> createCloudServices(
         'bucket': config.s3Bucket!,
         'useSSL': config.s3UseSSL ?? true,
         'port': config.s3Port,
+        'collaborationPagination': config.type == CloudBackendType.s3Collaboration,
+        'collaborationVirtualHosted': config.type == CloudBackendType.s3Collaboration &&
+            config.s3Endpoint!.startsWith('${config.s3Bucket}.'),
       });
 
       final auth = provider.auth;

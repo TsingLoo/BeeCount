@@ -9,8 +9,9 @@ import 's3_exceptions.dart';
 class S3StorageService implements CloudStorageService {
   final S3Client client;
   final String bucket;
+  final bool paginateListings;
 
-  S3StorageService(this.client, this.bucket);
+  S3StorageService(this.client, this.bucket, {this.paginateListings = false});
 
   @override
   Future<void> uploadFile(String localPath, String remotePath) async {
@@ -91,6 +92,12 @@ class S3StorageService implements CloudStorageService {
   Future<List<String>> listFiles(String remotePath) async {
     try {
       final prefix = _normalizePath(remotePath);
+      if (paginateListings) {
+        return await client.listObjectsAllPages(
+          bucket: bucket,
+          prefix: prefix.isEmpty ? null : prefix,
+        );
+      }
       return await client.listObjects(
         bucket: bucket,
         prefix: prefix.isEmpty ? null : prefix,

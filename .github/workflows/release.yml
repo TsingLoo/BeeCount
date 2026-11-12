@@ -34,6 +34,11 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.27.3"
+  # 本仓库只自签自装 arm64-v8a 的 APK,不走 Google Play:
+  #   - APK 只打 android-arm64(armeabi-v7a / x86_64 / universal 都不要)
+  #   - AAB 和 Play 上传整段跳过(AAB 只有 Play 用得上)
+  # 想恢复上游的全 ABI + Play 分发,把这里改成 "true" 即可。
+  BUILD_AAB: "false"
 
 jobs:
   check-branch:
@@ -162,11 +167,13 @@ jobs:
           echo "Debug: CI_VERSION=$CI_VERSION"
           echo "Debug: TAG_NAME=${{ steps.meta.outputs.tag_name }}"
           flutter build apk --release --flavor prod \
+            --target-platform android-arm64 \
             --dart-define=CI_VERSION="$CI_VERSION" \
             --dart-define=GIT_COMMIT="$GIT_COMMIT" \
             --dart-define=BUILD_TIME="$BUILD_TIME"
 
       - name: Build App Bundle (AAB)
+        if: env.BUILD_AAB == 'true'
         run: |
           export CI_VERSION='${{ steps.meta.outputs.tag_name }}'
           export GIT_COMMIT='${{ github.sha }}'
@@ -215,6 +222,8 @@ jobs:
         run: |
           VERSION="${{ steps.meta.outputs.tag_name }}"
           APK_DIR="build/app/outputs/apk/prod/release"
+          # 本仓库只打 arm64-v8a(见 Build APK 步骤的 --target-platform),所以这里
+          # 通常只会匹配到第一条;下面几条分支保留给恢复全 ABI 分发的情况。
           # AGP splits.abi 产出 4 个 APK,gradle 内 outputFileName 已经按 ABI 分名:
           #   - app-prod-release-vX.apk              主分发(arm64-v8a)
           #   - app-prod-armeabi-v7a-release-vX.apk  armv7 老设备兼容
@@ -264,7 +273,7 @@ jobs:
             build/app/outputs/bundle/prodRelease/beecount-*.aab
 
       - name: Upload AAB to Google Play Console
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch'
+        if: env.BUILD_AAB == 'true' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch')
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |

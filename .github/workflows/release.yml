@@ -372,7 +372,11 @@ jobs:
     name: iOS (app.zip + unsigned .ipa)
     runs-on: macos-latest
     needs: [check-branch]
-    if: always() && !contains(github.ref_name, '-beta.') && !contains(github.event.inputs.tag_name, '-beta.') && (needs.check-branch.result == 'success' || github.event_name == 'push')
+    # 本仓库没有 Apple 开发者账号和签名 secret,iOS 整个 job 默认不跑(否则必然
+    # 红一片)。想开启:在仓库 Variables 里加 BUILD_IOS=true
+    # (gh variable set BUILD_IOS --body true)。
+    # job 级 if 读不到 workflow 的 env,所以这里只能用 vars 而不是 BUILD_AAB 那种写法。
+    if: vars.BUILD_IOS == 'true' && always() && !contains(github.ref_name, '-beta.') && !contains(github.event.inputs.tag_name, '-beta.') && (needs.check-branch.result == 'success' || github.event_name == 'push')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -784,7 +788,8 @@ jobs:
       - check-branch
       - android
       - ios
-    if: always() && !contains(github.ref_name, '-beta.') && !contains(github.event.inputs.tag_name, '-beta.') && (needs.check-branch.result == 'success' || github.event_name == 'push') && needs.android.result == 'success' && needs.ios.result == 'success'
+    # iOS job 被 BUILD_IOS 关掉时 result 是 skipped,这里得放过,否则 release 跟着被跳过。
+    if: always() && !contains(github.ref_name, '-beta.') && !contains(github.event.inputs.tag_name, '-beta.') && (needs.check-branch.result == 'success' || github.event_name == 'push') && needs.android.result == 'success' && (needs.ios.result == 'success' || needs.ios.result == 'skipped')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -853,6 +858,8 @@ jobs:
           ls -R ./dist || true
 
       - name: Download iOS artifacts
+        # iOS job 被跳过时没有这个 artifact,不能让下载失败连带整个 release 失败。
+        if: needs.ios.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: ios

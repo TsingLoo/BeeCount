@@ -132,13 +132,37 @@ jobs:
             echo "Writing Android keystore from secret..."
             mkdir -p android/app
             echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/ci-release.keystore
-            printf '%s\n' \
-              'storeFile=ci-release.keystore' \
-              "storePassword=${ANDROID_KEYSTORE_PASSWORD}" \
-              "keyAlias=${ANDROID_KEY_ALIAS}" \
-              "keyPassword=${ANDROID_KEY_PASSWORD}" \
-              > android/key.properties
+
+            # key.properties 是 Java Properties 格式:反斜杠是转义符,行首的空格会被
+            # 吃掉。口令里只要带一个 \ ,Gradle 读到的就不是你设的那个口令,症状正好
+            # 是 "keystore password was incorrect"。这里按 Properties 规则转义。
+            prop_escape() {
+              printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/^ /\\ /'
+            }
+            {
+              printf 'storeFile=ci-release.keystore\n'
+              printf 'storePassword=%s\n' "$(prop_escape "${ANDROID_KEYSTORE_PASSWORD}")"
+              printf 'keyAlias=%s\n' "$(prop_escape "${ANDROID_KEY_ALIAS}")"
+              printf 'keyPassword=%s\n' "$(prop_escape "${ANDROID_KEY_PASSWORD}")"
+            } > android/key.properties
             echo "key.properties created."
+
+            # 口令对不对,5 秒就能知道,别等 7 分钟的 Gradle 跑到打包那步才报。
+            # keytool 直接用环境变量,不经过 Properties 转义,所以这步能把
+            # "口令本身错" 和 "转义导致的错" 区分开。
+            if keytool -list -keystore android/app/ci-release.keystore \
+                 -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
+                 -alias "${ANDROID_KEY_ALIAS}" >/dev/null 2>&1; then
+              echo "✅ keystore / 口令 / 别名 三者匹配"
+            else
+              echo "❌ 用 secret 里的口令和别名打不开这个 keystore。请检查:"
+              echo "   - ANDROID_KEYSTORE_PASSWORD 是否就是 keytool -genkeypair 时设的那个"
+              echo "   - ANDROID_KEY_ALIAS 是否与 keystore 里的别名一致"
+              echo "   - ANDROID_KEYSTORE_BASE64 是否是这把 keystore 的 base64"
+              keytool -list -keystore android/app/ci-release.keystore \
+                 -storepass "${ANDROID_KEYSTORE_PASSWORD}" 2>&1 | head -5 || true
+              exit 1
+            fi
           else
             echo "No Android signing secrets provided; will use fallback CI keystore in Gradle."
           fi
@@ -160,6 +184,10 @@ jobs:
           grep "^version:" pubspec.yaml
 
       - name: Build APK (release)
+        env:
+          # 只拆 arm64-v8a 一个 APK(见 android/app/build.gradle 的 splits.abi)。
+          # --target-platform 只管编译哪几份 AOT,管不到 APK 怎么拆,两个都要给。
+          BEECOUNT_ABIS: arm64-v8a
         run: |
           export CI_VERSION='${{ steps.meta.outputs.tag_name }}'
           export GIT_COMMIT='${{ github.sha }}'

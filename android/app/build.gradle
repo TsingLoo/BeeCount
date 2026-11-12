@@ -77,12 +77,22 @@ android {
     // "Multiple shrunk-resources files found"。所以根据 task name 动态启用:
     // - assembleProdRelease(APK): splits 开,产 4 个 APK
     // - bundleProdRelease(AAB):splits 关,正常 AAB
+    //
+    // 只想要其中一个 ABI 时(比如自签自装只用 arm64),设环境变量 BEECOUNT_ABIS,
+    // 逗号分隔;此时不再产 universal 包。不设就是上游默认的三 ABI + universal。
+    // 注意:flutter build apk 的 --target-platform 管不到这里的 include 列表,
+    // 它只决定编译哪几份 AOT 产物,APK 还是照 splits 的配置拆。
+    def abiOverride = System.getenv('BEECOUNT_ABIS')?.trim()
+    def hasAbiOverride = abiOverride != null && !abiOverride.isEmpty()
+    def abiList = hasAbiOverride
+            ? abiOverride.split(',').collect { it.trim() }.findAll { !it.isEmpty() }
+            : ['arm64-v8a', 'armeabi-v7a', 'x86_64']
     splits {
         abi {
             enable = !buildingAppBundle
             reset()
-            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
-            universalApk true
+            abiList.each { abiName -> include abiName }
+            universalApk = !hasAbiOverride
         }
     }
 

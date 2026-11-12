@@ -6980,6 +6980,66 @@ abstract class AppLocalizations {
   /// **'AWS S3 / Cloudflare R2 / MinIO'**
   String get cloudCustomS3Subtitle;
 
+  /// No description provided for @cloudS3CollaborationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'S3 Cloud Collaboration'**
+  String get cloudS3CollaborationTitle;
+
+  /// No description provided for @cloudS3CollaborationSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Incremental sync across your devices'**
+  String get cloudS3CollaborationSubtitle;
+
+  /// No description provided for @cloudS3CollaborationHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Use the same S3 settings on each device and enable automatic sync. Collaboration data is stored under beecount-sync/v3/ and is separate from S3 snapshot backups. Changes are checked while the app is active; this is not an instant push service.'**
+  String get cloudS3CollaborationHelp;
+
+  /// No description provided for @cloudS3SyncPasswordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Password'**
+  String get cloudS3SyncPasswordLabel;
+
+  /// No description provided for @cloudS3SyncPasswordHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Used for end-to-end encryption. Enter the same password on every device. It is never uploaded and cannot be recovered if lost; you can change it later from this dialog.'**
+  String get cloudS3SyncPasswordHint;
+
+  /// No description provided for @cloudS3SyncPasswordConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Sync Password'**
+  String get cloudS3SyncPasswordConfirm;
+
+  /// No description provided for @cloudS3SyncPasswordInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Both passwords must match and be at least 8 characters'**
+  String get cloudS3SyncPasswordInvalid;
+
+  /// No description provided for @cloudS3SyncPasswordMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'This sync password does not match the cloud collaboration data. Enter the password your other devices are currently using.'**
+  String get cloudS3SyncPasswordMismatch;
+
+  /// No description provided for @cloudS3SyncPasswordChangeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Sync Password'**
+  String get cloudS3SyncPasswordChangeTitle;
+
+  /// No description provided for @cloudS3SyncPasswordChangeWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Your cloud data is kept as is — only the encryption key is re-wrapped with the new password. Every other device must switch to the new password before it can sync again. Continue?'**
+  String get cloudS3SyncPasswordChangeWarning;
+
   /// No description provided for @cloudBeeCountCloudTitle.
   ///
   /// In en, this message translates to:

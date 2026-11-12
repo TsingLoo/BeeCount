@@ -116,6 +116,8 @@ class MinePage extends ConsumerWidget {
                                         .mineCloudServiceCustom;
                                   case CloudBackendType.s3:
                                     return 'S3';
+                                  case CloudBackendType.s3Collaboration:
+                                    return 'S3 云端协同';
                                   case CloudBackendType.beecountCloud:
                                     return cloudVersion != null &&
                                             cloudVersion.isNotEmpty

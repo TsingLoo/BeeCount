@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_cloud_sync/flutter_cloud_sync.dart' hide SyncStatus;
 import 'package:flutter_cloud_sync_icloud/flutter_cloud_sync_icloud.dart';
+import '../../cloud/s3_encrypted_storage.dart';
 import '../../providers/sync_providers.dart';
 import '../../providers/database_providers.dart';
 import '../../services/system/logger_service.dart';
@@ -42,7 +43,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
       final activeAsync = ref.read(activeCloudConfigProvider);
       if (activeAsync.hasValue) {
         final active = activeAsync.value!;
-        if (active.type == CloudBackendType.beecountCloud) {
+        if (active.type == CloudBackendType.beecountCloud ||
+            active.type == CloudBackendType.s3Collaboration) {
           setState(() => _selectedTab = 'cloud');
         } else if (active.type != CloudBackendType.local) {
           setState(() => _selectedTab = 'backup');
@@ -78,6 +80,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
     final supabaseAsync = ref.watch(supabaseConfigProvider);
     final webdavAsync = ref.watch(webdavConfigProvider);
     final s3Async = ref.watch(s3ConfigProvider);
+    final s3CollaborationAsync = ref.watch(s3CollaborationConfigProvider);
 
     return Scaffold(
       backgroundColor: BeeTokens.scaffoldBackground(context),
@@ -160,7 +163,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                     children: [
                       // 多设备同步警告
                       if (active.type != CloudBackendType.local &&
-                          active.type != CloudBackendType.beecountCloud) ...[
+                          active.type != CloudBackendType.beecountCloud &&
+                          active.type != CloudBackendType.s3Collaboration) ...[
                         _buildMultiDeviceWarning(context),
                         const SizedBox(height: 12),
                       ],
@@ -252,7 +256,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                     ],
                   );
                 } else {
-                  // ===== 云端协同 (BeeCount Cloud) =====
+                  // ===== 云端协同 =====
                   return ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
@@ -277,6 +281,30 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                               ? () => _configureService(CloudBackendType.beecountCloud)
                               : null,
                           onShowGuide: _showBeeCountCloudHelpDialog,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      s3CollaborationAsync.when(
+                        loading: () => const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())),
+                        error: (e, _) => const SizedBox.shrink(),
+                        data: (s3Cfg) => _buildServiceCard(
+                          context: context,
+                          icon: Icons.sync,
+                          iconColor: BeeTokens.brandS3,
+                          title: AppLocalizations.of(context).cloudS3CollaborationTitle,
+                          subtitle: s3Cfg?.valid == true
+                              ? s3Cfg!.obfuscatedUrl()
+                              : AppLocalizations.of(context).cloudS3CollaborationSubtitle,
+                          isSelected: active.type == CloudBackendType.s3Collaboration,
+                          isConfigured: s3Cfg?.valid == true,
+                          isDisabled: false,
+                          onTap: () => s3Cfg?.valid == true
+                              ? _switchService(CloudBackendType.s3Collaboration)
+                              : _configureService(CloudBackendType.s3Collaboration),
+                          onConfigure: s3Cfg?.valid == true
+                              ? () => _configureService(CloudBackendType.s3Collaboration)
+                              : null,
+                          onShowGuide: _showS3CollaborationHelpDialog,
                         ),
                       ),
                     ],
@@ -1341,6 +1369,15 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
     );
   }
 
+  Future<void> _showS3CollaborationHelpDialog() async {
+    final l10n = AppLocalizations.of(context);
+    await AppDialog.info(
+      context,
+      title: l10n.cloudS3CollaborationTitle,
+      message: l10n.cloudS3CollaborationHelp,
+    );
+  }
+
   Widget _buildHelpSection(String title, List<String> items) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1482,8 +1519,9 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
       await _showSupabaseConfigDialog();
     } else if (type == CloudBackendType.webdav) {
       await _showWebdavConfigDialog();
-    } else if (type == CloudBackendType.s3) {
-      await _showS3ConfigDialog();
+    } else if (type == CloudBackendType.s3 ||
+        type == CloudBackendType.s3Collaboration) {
+      await _showS3ConfigDialog(type);
     }
   }
 
@@ -1694,8 +1732,12 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
     }
   }
 
-  Future<void> _showS3ConfigDialog() async {
-    final existing = await ref.read(s3ConfigProvider.future);
+  Future<void> _showS3ConfigDialog(CloudBackendType type) async {
+    // 配置名要在弹窗关掉之后才用得上,那时 context 可能已经失效,所以先取出来。
+    final l10n = AppLocalizations.of(context);
+    final existing = type == CloudBackendType.s3
+        ? await ref.read(s3ConfigProvider.future)
+        : await ref.read(s3CollaborationConfigProvider.future);
 
     if (!mounted) return;
 
@@ -1709,6 +1751,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
         initialBucket: existing?.s3Bucket ?? '',
         initialUseSSL: existing?.s3UseSSL ?? true,
         initialPort: existing?.s3Port,
+        collaboration: type == CloudBackendType.s3Collaboration,
+        initialSyncPassword: existing?.s3SyncPassword ?? '',
       ),
     );
 
@@ -1720,6 +1764,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
       final bucket = result['bucket'] as String;
       final useSSL = result['useSSL'] as bool;
       final port = result['port'] as int?;
+      final syncPassword = result['syncPassword'] as String?;
 
       if (endpoint.isEmpty || accessKey.isEmpty || secretKey.isEmpty || bucket.isEmpty) {
         if (mounted) {
@@ -1732,8 +1777,10 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
       endpoint = endpoint.replaceFirst(RegExp(r'^https?://'), '');
 
       final cfg = CloudServiceConfig(
-        type: CloudBackendType.s3,
-        name: AppLocalizations.of(context).cloudCustomS3Title,
+        type: type,
+        name: type == CloudBackendType.s3
+            ? l10n.cloudCustomS3Title
+            : l10n.cloudS3CollaborationTitle,
         s3Endpoint: endpoint,
         s3Region: region.isEmpty ? 'us-east-1' : region,
         s3AccessKey: accessKey,
@@ -1741,6 +1788,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
         s3Bucket: bucket,
         s3UseSSL: useSSL,
         s3Port: port,
+        s3SyncPassword: syncPassword,
       );
 
       if (!cfg.valid) {
@@ -1748,6 +1796,31 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
           await AppDialog.error(context, title: AppLocalizations.of(context).cloudConfigInvalidTitle, message: AppLocalizations.of(context).cloudConfigInvalidMessage);
         }
         return;
+      }
+
+      // 同一个桶换了同步密码：云端数据一个字节都不用动，只把数据密钥重新封装一
+      // 次。换桶/换 endpoint 不走这里 —— 那是另一个库，会按新密码自己初始化。
+      final oldPassword = existing?.s3SyncPassword ?? '';
+      if (type == CloudBackendType.s3Collaboration &&
+          oldPassword.isNotEmpty &&
+          oldPassword != syncPassword &&
+          existing!.s3Bucket == cfg.s3Bucket &&
+          existing.s3Endpoint?.replaceFirst(RegExp(r'^https?://'), '') ==
+              cfg.s3Endpoint) {
+        if (!mounted) return;
+        final confirmed = await AppDialog.confirm<bool>(
+          context,
+          title: AppLocalizations.of(context).cloudS3SyncPasswordChangeTitle,
+          message:
+              AppLocalizations.of(context).cloudS3SyncPasswordChangeWarning,
+        );
+        if (confirmed != true) return;
+        final rotated = await _rotateS3SyncPassword(
+          cfg: cfg,
+          oldPassword: oldPassword,
+          newPassword: syncPassword!,
+        );
+        if (!rotated) return; // 封装没换成功就别把新密码存下来
       }
 
       try {
@@ -1758,6 +1831,59 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
           await AppDialog.error(context, title: AppLocalizations.of(context).cloudSaveFailed, message: e.toString());
         }
       }
+    }
+  }
+
+  /// 用旧密码打开云端的密钥封装，再用新密码封回去（只重写 keyparams.json）。
+  /// 失败就返回 false 并弹错误 —— 新密码不落盘，否则本机会存着一个解不开云端
+  /// 数据的密码。
+  Future<bool> _rotateS3SyncPassword({
+    required CloudServiceConfig cfg,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final services = await createCloudServices(CloudServiceConfig(
+        type: cfg.type,
+        name: cfg.name,
+        s3Endpoint: cfg.s3Endpoint,
+        s3Region: cfg.s3Region,
+        s3AccessKey: cfg.s3AccessKey,
+        s3SecretKey: cfg.s3SecretKey,
+        s3Bucket: cfg.s3Bucket,
+        s3UseSSL: cfg.s3UseSSL,
+        s3Port: cfg.s3Port,
+        s3SyncPassword: oldPassword,
+      ));
+      final provider = services.provider;
+      if (provider == null) {
+        throw Exception('S3 provider 初始化失败');
+      }
+      try {
+        await S3EncryptedStorage(provider.storage,
+                password: oldPassword, bucket: cfg.s3Bucket!)
+            .changePassword(newPassword);
+      } finally {
+        await provider.dispose();
+      }
+      logger.info('CloudServicePage', 'S3 协同同步密码已更换（云端数据未重写）');
+      return true;
+    } on S3SyncPasswordMismatch catch (e, stackTrace) {
+      logger.error('CloudServicePage', 'S3 协同换密码失败：旧密码解不开: $e', e, stackTrace);
+      if (mounted) {
+        await AppDialog.error(context,
+            title: AppLocalizations.of(context).cloudS3SyncPasswordChangeTitle,
+            message: AppLocalizations.of(context).cloudS3SyncPasswordMismatch);
+      }
+      return false;
+    } catch (e, stackTrace) {
+      logger.error('CloudServicePage', 'S3 协同换密码失败: $e', e, stackTrace);
+      if (mounted) {
+        await AppDialog.error(context,
+            title: AppLocalizations.of(context).cloudS3SyncPasswordChangeTitle,
+            message: e.toString());
+      }
+      return false;
     }
   }
 
@@ -1773,6 +1899,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
         return 'iCloud';
       case CloudBackendType.s3:
         return 'S3';
+      case CloudBackendType.s3Collaboration:
+        return AppLocalizations.of(context).cloudS3CollaborationTitle;
       case CloudBackendType.beecountCloud:
         return 'BeeCount Cloud';
     }
@@ -1781,6 +1909,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
   // 测试连接
   Future<void> _testConnection(CloudServiceConfig config, {bool showDialog = true}) async {
     if (!config.valid || config.type == CloudBackendType.local) return;
+    // 同步密码不匹配的提示要在一串网络 await 之后才抛出,先把文案取出来。
+    final l10n = AppLocalizations.of(context);
 
     setState(() => _testingConnection = true);
     try {
@@ -1895,6 +2025,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
             break;
 
           case CloudBackendType.s3:
+          case CloudBackendType.s3Collaboration:
             // S3 连接测试 - 尝试列出对象（ListObjects）
             try {
               // 确保 endpoint 不包含协议前缀（兼容旧配置）
@@ -1908,6 +2039,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                 s3Bucket: config.s3Bucket,
                 s3UseSSL: config.s3UseSSL,
                 s3Port: config.s3Port,
+                s3SyncPassword: config.s3SyncPassword,
               );
 
               logger.info('CloudServicePage', 'S3 连接测试开始: endpoint=${cleanedConfig.s3Endpoint}, bucket=${cleanedConfig.s3Bucket}');
@@ -1927,11 +2059,24 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                 logger.info('CloudServicePage', 'S3 开始测试列出文件');
                 await provider.storage.list(path: '');
 
+                // 协同库再验一次同步密码：桶里已有数据但密钥封装解不开，说明密码
+                // 和其它设备不一致，这时候不能算"连接成功"。只读，不初始化桶。
+                if (cleanedConfig.type == CloudBackendType.s3Collaboration) {
+                  logger.info('CloudServicePage', 'S3 协同开始校验同步密码');
+                  await S3EncryptedStorage(provider.storage,
+                          password: cleanedConfig.s3SyncPassword ?? '',
+                          bucket: cleanedConfig.s3Bucket!)
+                      .verifyPassword();
+                }
+
                 logger.info('CloudServicePage', 'S3 连接测试成功');
                 connectionSuccess = true;
               } finally {
                 await provider.dispose();
               }
+            } on S3SyncPasswordMismatch catch (e, stackTrace) {
+              logger.error('CloudServicePage', 'S3 协同同步密码不匹配: $e', e, stackTrace);
+              throw Exception(l10n.cloudS3SyncPasswordMismatch);
             } catch (e, stackTrace) {
               logger.error('CloudServicePage', 'S3 连接测试失败: $e', e, stackTrace);
               // 提取最有用的错误信息
@@ -2316,6 +2461,8 @@ class _WebdavConfigDialogState extends State<_WebdavConfigDialog> {
 
 // S3配置对话框(独立Widget,避免controller生命周期问题)
 class _S3ConfigDialog extends StatefulWidget {
+  final bool collaboration;
+  final String initialSyncPassword;
   final String initialEndpoint;
   final String initialRegion;
   final String initialAccessKey;
@@ -2325,6 +2472,8 @@ class _S3ConfigDialog extends StatefulWidget {
   final int? initialPort;
 
   const _S3ConfigDialog({
+    required this.collaboration,
+    required this.initialSyncPassword,
     required this.initialEndpoint,
     required this.initialRegion,
     required this.initialAccessKey,
@@ -2339,6 +2488,9 @@ class _S3ConfigDialog extends StatefulWidget {
 }
 
 class _S3ConfigDialogState extends State<_S3ConfigDialog> {
+  late final TextEditingController syncPasswordController;
+  late final TextEditingController confirmPasswordController;
+  bool passwordInvalid = false;
   late final TextEditingController endpointController;
   late final TextEditingController regionController;
   late final TextEditingController accessKeyController;
@@ -2351,6 +2503,8 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
   @override
   void initState() {
     super.initState();
+    syncPasswordController = TextEditingController(text: widget.initialSyncPassword);
+    confirmPasswordController = TextEditingController(text: widget.initialSyncPassword);
     endpointController = TextEditingController(text: widget.initialEndpoint);
     regionController = TextEditingController(text: widget.initialRegion);
     accessKeyController = TextEditingController(text: widget.initialAccessKey);
@@ -2362,6 +2516,8 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
 
   @override
   void dispose() {
+    syncPasswordController.dispose();
+    confirmPasswordController.dispose();
     endpointController.dispose();
     regionController.dispose();
     accessKeyController.dispose();
@@ -2369,6 +2525,11 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
     bucketController.dispose();
     portController.dispose();
     super.dispose();
+  }
+
+  /// 用户一开始改口令就撤掉报错，不让上一次点击保存的提示一直挂着
+  void _clearPasswordError(String _) {
+    if (passwordInvalid) setState(() => passwordInvalid = false);
   }
 
   @override
@@ -2431,6 +2592,30 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
                 hintText: AppLocalizations.of(context).cloudS3BucketHint,
               ),
             ),
+            if (widget.collaboration) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: syncPasswordController,
+                obscureText: true,
+                onChanged: _clearPasswordError,
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context).cloudS3SyncPasswordLabel,
+                  helperText: AppLocalizations.of(context).cloudS3SyncPasswordHint,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: confirmPasswordController,
+                obscureText: true,
+                onChanged: _clearPasswordError,
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context).cloudS3SyncPasswordConfirm,
+                  errorText: passwordInvalid
+                      ? AppLocalizations.of(context).cloudS3SyncPasswordInvalid
+                      : null,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -2466,6 +2651,12 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
         ),
         FilledButton(
           onPressed: () {
+            if (widget.collaboration &&
+                (syncPasswordController.text.length < 8 ||
+                    syncPasswordController.text != confirmPasswordController.text)) {
+              setState(() => passwordInvalid = true);
+              return;
+            }
             final portText = portController.text.trim();
             final port = portText.isEmpty ? null : int.tryParse(portText);
 
@@ -2477,6 +2668,9 @@ class _S3ConfigDialogState extends State<_S3ConfigDialog> {
               'bucket': bucketController.text.trim(),
               'useSSL': useSSL,
               'port': port,
+              'syncPassword': widget.collaboration
+                  ? syncPasswordController.text
+                  : null,
             });
           },
           child: Text(AppLocalizations.of(context).commonSave),

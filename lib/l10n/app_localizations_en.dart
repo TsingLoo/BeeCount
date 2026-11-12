@@ -3686,6 +3686,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudCustomS3Subtitle => 'AWS S3 / Cloudflare R2 / MinIO';
 
   @override
+  String get cloudS3CollaborationTitle => 'S3 Cloud Collaboration';
+
+  @override
+  String get cloudS3CollaborationSubtitle => 'Incremental sync across your devices';
+
+  @override
+  String get cloudS3CollaborationHelp => 'Use the same S3 settings on each device and enable automatic sync. Collaboration data is stored under beecount-sync/v3/ and is separate from S3 snapshot backups. Changes are checked while the app is active; this is not an instant push service.';
+
+  @override
+  String get cloudS3SyncPasswordLabel => 'Sync Password';
+
+  @override
+  String get cloudS3SyncPasswordHint => 'Used for end-to-end encryption. Enter the same password on every device. It is never uploaded and cannot be recovered if lost; you can change it later from this dialog.';
+
+  @override
+  String get cloudS3SyncPasswordConfirm => 'Confirm Sync Password';
+
+  @override
+  String get cloudS3SyncPasswordInvalid => 'Both passwords must match and be at least 8 characters';
+
+  @override
+  String get cloudS3SyncPasswordMismatch => 'This sync password does not match the cloud collaboration data. Enter the password your other devices are currently using.';
+
+  @override
+  String get cloudS3SyncPasswordChangeTitle => 'Change Sync Password';
+
+  @override
+  String get cloudS3SyncPasswordChangeWarning => 'Your cloud data is kept as is — only the encryption key is re-wrapped with the new password. Every other device must switch to the new password before it can sync again. Continue?';
+
+  @override
   String get cloudBeeCountCloudTitle => 'BeeCount Cloud';
 
   @override

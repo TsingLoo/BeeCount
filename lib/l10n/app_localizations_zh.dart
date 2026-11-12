@@ -3686,6 +3686,36 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudCustomS3Subtitle => 'AWS S3 / Cloudflare R2 / MinIO';
 
   @override
+  String get cloudS3CollaborationTitle => 'S3 云端协同';
+
+  @override
+  String get cloudS3CollaborationSubtitle => '多设备增量同步';
+
+  @override
+  String get cloudS3CollaborationHelp => '在各设备填写相同的 S3 配置并开启自动同步。协同数据存放在 beecount-sync/v3/，与 S3 快照备份分开。应用运行时会定期检查变更，并非服务端即时推送。';
+
+  @override
+  String get cloudS3SyncPasswordLabel => '同步密码';
+
+  @override
+  String get cloudS3SyncPasswordHint => '用于端到端加密。各设备须填写相同密码；密码不会上传，丢失无法找回；之后可在本对话框中修改。';
+
+  @override
+  String get cloudS3SyncPasswordConfirm => '确认同步密码';
+
+  @override
+  String get cloudS3SyncPasswordInvalid => '两次输入需一致，且至少 8 位';
+
+  @override
+  String get cloudS3SyncPasswordMismatch => '同步密码与云端协同数据不匹配，请输入其他设备当前使用的密码。';
+
+  @override
+  String get cloudS3SyncPasswordChangeTitle => '修改同步密码';
+
+  @override
+  String get cloudS3SyncPasswordChangeWarning => '云端数据保持原样，只把加密密钥用新密码重新封装一次。其他设备需改用新密码才能继续同步。是否继续？';
+
+  @override
   String get cloudBeeCountCloudTitle => 'BeeCount Cloud';
 
   @override
@@ -12355,6 +12385,36 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get cloudCustomS3Subtitle => 'AWS S3 / Cloudflare R2 / MinIO';
+
+  @override
+  String get cloudS3CollaborationTitle => 'S3 雲端協同';
+
+  @override
+  String get cloudS3CollaborationSubtitle => '多裝置增量同步';
+
+  @override
+  String get cloudS3CollaborationHelp => '在各裝置填寫相同的 S3 設定並開啟自動同步。協同資料存放在 beecount-sync/v3/，與 S3 快照備份分開。應用程式運行時會定期檢查變更，並非伺服器即時推送。';
+
+  @override
+  String get cloudS3SyncPasswordLabel => '同步密碼';
+
+  @override
+  String get cloudS3SyncPasswordHint => '用於端對端加密。各裝置須填寫相同密碼；密碼不會上傳，遺失無法找回；之後可在本對話框中修改。';
+
+  @override
+  String get cloudS3SyncPasswordConfirm => '確認同步密碼';
+
+  @override
+  String get cloudS3SyncPasswordInvalid => '兩次輸入須一致，且至少 8 位';
+
+  @override
+  String get cloudS3SyncPasswordMismatch => '同步密碼與雲端協同資料不相符，請輸入其他裝置目前使用的密碼。';
+
+  @override
+  String get cloudS3SyncPasswordChangeTitle => '修改同步密碼';
+
+  @override
+  String get cloudS3SyncPasswordChangeWarning => '雲端資料保持原樣，只把加密金鑰用新密碼重新封裝一次。其他裝置需改用新密碼才能繼續同步。是否繼續？';
 
   @override
   String get cloudBeeCountCloudTitle => 'BeeCount Cloud';

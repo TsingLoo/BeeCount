@@ -3686,6 +3686,36 @@ class AppLocalizationsKo extends AppLocalizations {
   String get cloudCustomS3Subtitle => 'AWS S3 / Cloudflare R2 / MinIO';
 
   @override
+  String get cloudS3CollaborationTitle => 'S3 클라우드 동기화';
+
+  @override
+  String get cloudS3CollaborationSubtitle => '기기 간 증분 동기화';
+
+  @override
+  String get cloudS3CollaborationHelp => '각 기기에 동일한 S3 설정을 입력하고 자동 동기화를 켜세요. 협업 데이터는 beecount-sync/v3/에 저장되며 S3 스냅샷 백업과 분리됩니다. 앱 실행 중 주기적으로 변경 사항을 확인하며 즉시 푸시되지는 않습니다.';
+
+  @override
+  String get cloudS3SyncPasswordLabel => '동기화 비밀번호';
+
+  @override
+  String get cloudS3SyncPasswordHint => '종단 간 암호화에 사용됩니다. 모든 기기에 같은 비밀번호를 입력하세요. 업로드되지 않고 잃어버리면 복구할 수 없으며, 나중에 이 대화상자에서 변경할 수 있습니다.';
+
+  @override
+  String get cloudS3SyncPasswordConfirm => '동기화 비밀번호 확인';
+
+  @override
+  String get cloudS3SyncPasswordInvalid => '두 비밀번호가 일치해야 하며 8자 이상이어야 합니다';
+
+  @override
+  String get cloudS3SyncPasswordMismatch => '이 동기화 비밀번호는 클라우드 협업 데이터와 일치하지 않습니다. 다른 기기에서 현재 사용 중인 비밀번호를 입력하세요.';
+
+  @override
+  String get cloudS3SyncPasswordChangeTitle => '동기화 비밀번호 변경';
+
+  @override
+  String get cloudS3SyncPasswordChangeWarning => '클라우드 데이터는 그대로 유지되며 암호화 키만 새 비밀번호로 다시 봉인됩니다. 다른 모든 기기는 새 비밀번호로 바꿔야 다시 동기화할 수 있습니다. 계속할까요?';
+
+  @override
   String get cloudBeeCountCloudTitle => 'BeeCount 클라우드';
 
   @override

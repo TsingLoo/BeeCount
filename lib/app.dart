@@ -21,6 +21,7 @@ import 'widgets/ui/ui.dart';
 import 'widgets/ui/speed_dial_fab.dart';
 import 'cloud/sync_service.dart';
 import 'cloud/transactions_sync_manager.dart';
+import 'cloud/s3_incremental_sync_manager.dart';
 import 'cloud/sync/sync_engine.dart';
 import 'providers/sync_providers.dart' as sp;
 import 'utils/voice_billing_helper.dart';
@@ -76,6 +77,8 @@ class _BeeAppState extends ConsumerState<BeeApp>
   // 层 —— 避免 trigger 内的 phase 1(syncMyProfile / storage.list / pull)
   // 重复跑浪费 HTTP。
   DateTime? _lastInitialCloudSyncTriggeredAt;
+  Timer? _s3PollTimer;
+  bool _s3PollInProgress = false;
 
   // 记账按钮相关状态
   late AnimationController _expandController;
@@ -101,6 +104,11 @@ class _BeeAppState extends ConsumerState<BeeApp>
 
     // 后台刷新账本同步状态
     _refreshLedgersStatusInBackground();
+    _s3PollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        _pollS3Incremental();
+      }
+    });
     // 延迟监听 AppLink，确保 context 可用
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAppLinkListener();
@@ -186,7 +194,9 @@ class _BeeAppState extends ConsumerState<BeeApp>
     Future.microtask(() async {
       try {
         final syncService = ref.read(syncServiceProvider);
-        if (syncService is TransactionsSyncManager) {
+        if (syncService is S3IncrementalSyncManager) {
+          await _pollS3Incremental();
+        } else if (syncService is TransactionsSyncManager) {
           await syncService.refreshAllLedgersStatus();
           ref.read(ledgerListRefreshProvider.notifier).state++;
         } else if (syncService is SyncEngine) {
@@ -202,11 +212,54 @@ class _BeeAppState extends ConsumerState<BeeApp>
     ref.listenManual<SyncService>(
       syncServiceProvider,
       (prev, next) {
-        if (prev is SyncEngine || next is! SyncEngine) return;
-        _triggerInitialCloudSync(next);
+        if (next is S3IncrementalSyncManager) {
+          _pollS3Incremental();
+        } else if (prev is! SyncEngine && next is SyncEngine) {
+          _triggerInitialCloudSync(next);
+        }
       },
       fireImmediately: false,
     );
+  }
+
+  Future<void> _pollS3Incremental() async {
+    if (_s3PollInProgress || !mounted) return;
+    final sync = ref.read(syncServiceProvider);
+    if (sync is! S3IncrementalSyncManager) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool('auto_sync') ?? false)) return;
+    _s3PollInProgress = true;
+    try {
+      final remoteLedgers = await sync.getRemoteLedgers();
+      var restoredAny = false;
+      for (final remote in remoteLedgers) {
+        final remoteId = remote.remoteSyncId;
+        if (remoteId == null) continue;
+        final restored = await sync.downloadRemoteLedger(
+          name: remote.name,
+          currency: remote.currency,
+          remotePath: S3IncrementalSyncManager.remoteLedgerPath(remoteId),
+        );
+        restoredAny = restored != null || restoredAny;
+      }
+      final db = ref.read(databaseProvider);
+      final ledgers = await db.select(db.ledgers).get();
+      var applied = 0;
+      for (final ledger in ledgers) {
+        applied += await sync.syncIncremental(ledgerId: ledger.id);
+      }
+      if ((applied > 0 || restoredAny) && mounted) {
+        ref.read(ledgerListRefreshProvider.notifier).state++;
+        ref.read(syncGenerationProvider.notifier).state++;
+        ref.read(syncStatusRefreshProvider.notifier).state++;
+      }
+      if (mounted) ref.read(sp.lastSyncErrorProvider.notifier).state = null;
+    } catch (e) {
+      logger.warning('S3Sync', '增量拉取失败: $e');
+      if (mounted) ref.read(sp.lastSyncErrorProvider.notifier).state = e.toString();
+    } finally {
+      _s3PollInProgress = false;
+    }
   }
 
   void _triggerInitialCloudSync(SyncEngine engine) {
@@ -579,6 +632,7 @@ class _BeeAppState extends ConsumerState<BeeApp>
 
   @override
   void dispose() {
+    _s3PollTimer?.cancel();
     _drainTimer?.cancel();
     _appLinkSubscription?.close();
     _removeOverlay();
@@ -733,6 +787,7 @@ class _BeeAppState extends ConsumerState<BeeApp>
       // 记录进入后台时间
       AppLockService.recordBackgroundTime();
     } else if (state == AppLifecycleState.resumed) {
+      _pollS3Incremental();
       // 移除隐私模糊屏
       ref.read(showPrivacyScreenProvider.notifier).state = false;
       // 检查是否需要锁定

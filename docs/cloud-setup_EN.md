@@ -233,7 +233,7 @@ Jianguoyun:
 3. **Configure in app**
    - Open BeeCount → Profile → Cloud Service
    - Tap "Add custom cloud service"
-   - Service type: **S3 Protocol**
+   - Service type: **S3 Protocol** (under "Backup") or **S3 Cloud Collaboration** (under "Collaboration")
    - Fill in:
      - **Endpoint**: R2 endpoint (no `https://`)
      - **Region**: `auto`
@@ -243,6 +243,27 @@ Jianguoyun:
      - **Port**: leave blank
    - Tap "Test connection" to verify
    - Save and enable
+
+### Backup vs. Collaboration
+
+**Backup → S3 Protocol** keeps the existing `ledger_*.json` snapshot backup with manual restore. Existing configurations stay where they are and are never silently upgraded to incremental collaboration.
+
+**Collaboration → S3 Cloud Collaboration** uses its own, separate configuration. Enter the same endpoint, bucket, credentials and **sync password** on every device, then turn on "Auto sync ledgers" on the Cloud Sync page.
+
+The sync password is the end-to-end encryption passphrase. It is stored on the device only and never uploaded: collaboration data is encrypted before it leaves the device, so the storage provider only sees object names (ledger id / device id / sequence number) — never amounts, notes or category names.
+
+Encryption uses two layers:
+
+- Ledger data is encrypted with a random 256-bit **data key** (AES-256-GCM, object path as AAD).
+- The sync password is stretched with PBKDF2-HMAC-SHA256 (200,000 iterations, random salt) into a **password key** that encrypts the data key only. The result is stored in `beecount-sync/v3/keyparams.json`, which contains no plaintext secret.
+
+That is why changing the sync password only re-wraps the data key — your cloud data is not re-uploaded. You can change it from the S3 Cloud Collaboration dialog; this device must still know the current password (otherwise the data key cannot be unwrapped), and every other device has to switch to the new password before it can sync again. Conversely, losing the password means the data key can never be unwrapped: uploaded data is unrecoverable.
+
+> ⚠️ Changing the password replaces the door to the data key, not the data key itself. If an old password leaked **and** the attacker kept a copy of the `keyparams.json` from that time, they can still decrypt the history encrypted with that data key. To roll the data key itself, delete the cloud collaboration data and enable it again.
+
+Exported configuration files never contain the sync password — after importing on a new device, enter it by hand.
+
+Changes are uploaded right after you record them, and other devices' changes are pulled on launch, on resume, and roughly every 30 seconds while the app is in the foreground. The first run writes discovery snapshots and incremental journals under `beecount-sync/v3/`; legacy `ledger_*.json` backups are never read, rewritten or deleted. Once the device is in the background, the system decides when sync runs again. If the same transaction is edited offline on two devices, the device clock decides which edit wins, so avoid simultaneous edits; image attachments still need a separate backup. Journal objects accumulate as changes pile up.
 
 **Other S3 examples**:
 

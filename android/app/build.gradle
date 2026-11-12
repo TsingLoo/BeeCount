@@ -8,6 +8,22 @@ plugins {
 // Google Play 自动保护要求 AAB 至少 API 24；APK 继续支持 API 23。
 def buildingAppBundle = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
 
+// 只想要指定 ABI 时(比如自签自装只要 arm64),设环境变量 BEECOUNT_ABIS,逗号分隔。
+// 此时整段关掉 splits.abi,改用 ndk.abiFilters 收口,只产一个 APK。不设就是上游
+// 默认的三 ABI + universal 拆包。
+//
+// 为什么不是「splits 只 include 一个 ABI」:flutter build apk 构建完会去
+// build/app/outputs/flutter-apk/ 找 app-<flavor>-release.apk(没加 --split-per-abi
+// 时只认这一个名字),而 Flutter 的 gradle 插件只会把**没有 ABI filter**的那份输出
+// 拷成这个名字(带 filter 的会多一截 -arm64-v8a)。所以单 ABI + universalApk=false
+// 时 Gradle 明明成功了,工具却报 "Gradle build failed to produce an .apk file"。
+//
+// 另外 --target-platform 只决定编译哪几份 AOT 产物,管不到插件自带的 .so
+// (sqlite3 之类三个 ABI 全带),所以真要瘦身必须靠 abiFilters。
+def abiOverride = System.getenv('BEECOUNT_ABIS')?.trim()
+def abiList = abiOverride ? abiOverride.split(',').collect { it.trim() }.findAll { it } : []
+def hasAbiOverride = !abiList.isEmpty()
+
 // Load signing credentials from key.properties (not committed to VCS)
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
@@ -47,6 +63,12 @@ android {
         versionName = flutter.versionName
         manifestPlaceholders += [appName: "@string/app_name"]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        if (hasAbiOverride) {
+            ndk {
+                abiFilters.clear()
+                abiFilters.addAll(abiList)
+            }
+        }
     // 当未在命令行指定 --flavor 时，默认选择 dev 风味，避免 Flutter 调试找不到 APK。
     missingDimensionStrategy "env", "dev"
     }
@@ -78,21 +100,13 @@ android {
     // - assembleProdRelease(APK): splits 开,产 4 个 APK
     // - bundleProdRelease(AAB):splits 关,正常 AAB
     //
-    // 只想要其中一个 ABI 时(比如自签自装只用 arm64),设环境变量 BEECOUNT_ABIS,
-    // 逗号分隔;此时不再产 universal 包。不设就是上游默认的三 ABI + universal。
-    // 注意:flutter build apk 的 --target-platform 管不到这里的 include 列表,
-    // 它只决定编译哪几份 AOT 产物,APK 还是照 splits 的配置拆。
-    def abiOverride = System.getenv('BEECOUNT_ABIS')?.trim()
-    def hasAbiOverride = abiOverride != null && !abiOverride.isEmpty()
-    def abiList = hasAbiOverride
-            ? abiOverride.split(',').collect { it.trim() }.findAll { !it.isEmpty() }
-            : ['arm64-v8a', 'armeabi-v7a', 'x86_64']
+    // 设了 BEECOUNT_ABIS 就不拆包了,改走 defaultConfig.ndk.abiFilters(见文件开头)。
     splits {
         abi {
-            enable = !buildingAppBundle
+            enable = !buildingAppBundle && !hasAbiOverride
             reset()
-            abiList.each { abiName -> include abiName }
-            universalApk = !hasAbiOverride
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            universalApk = true
         }
     }
 
@@ -200,7 +214,10 @@ android.applicationVariants.all { variant ->
             def vCode = variant.versionCode
             def abi = output.getFilter(com.android.build.OutputFile.ABI)
             def baseName
-            if (abi == null) {
+            if (abi == null && hasAbiOverride) {
+                // 没拆包,内容就是 BEECOUNT_ABIS 指定的那(几)个 ABI,按主分发命名
+                baseName = "app-${flavor}-release-v${vName}(${vCode}).apk"
+            } else if (abi == null) {
                 // splits.abi.universalApk=true 产出的 universal 包(含所有 include 的 ABI)
                 baseName = "app-${flavor}-universal-release-v${vName}(${vCode}).apk"
             } else if (abi == "arm64-v8a") {

@@ -250,8 +250,8 @@ jobs:
         run: |
           VERSION="${{ steps.meta.outputs.tag_name }}"
           APK_DIR="build/app/outputs/apk/prod/release"
-          # 本仓库只打 arm64-v8a(见 Build APK 步骤的 --target-platform),所以这里
-          # 通常只会匹配到第一条;下面几条分支保留给恢复全 ABI 分发的情况。
+          # 本仓库只打 arm64-v8a(见 Build APK 步骤的 BEECOUNT_ABIS),此时不拆包,
+          # 只会匹配到第一条;下面几条分支保留给恢复全 ABI 分发的情况。
           # AGP splits.abi 产出 4 个 APK,gradle 内 outputFileName 已经按 ABI 分名:
           #   - app-prod-release-vX.apk              主分发(arm64-v8a)
           #   - app-prod-armeabi-v7a-release-vX.apk  armv7 老设备兼容

@@ -81,6 +81,7 @@ class AppConfig {
   final SupabaseConfig? supabase;
   final WebdavConfig? webdav;
   final S3Config? s3;
+  final S3Config? s3Collaboration;
   final BeeCountCloudConfig? beecountCloud;
   final AIConfig? ai;
   final AppSettingsConfig? appSettings;
@@ -95,6 +96,7 @@ class AppConfig {
     this.supabase,
     this.webdav,
     this.s3,
+    this.s3Collaboration,
     this.beecountCloud,
     this.ai,
     this.appSettings,
@@ -123,6 +125,9 @@ class AppConfig {
 
     if (s3 != null) {
       map['s3'] = s3!.toMap();
+    }
+    if (s3Collaboration != null) {
+      map['s3_collaboration'] = s3Collaboration!.toMap();
     }
 
     if (ai != null) {
@@ -173,6 +178,10 @@ class AppConfig {
       s3: yaml.containsKey('s3')
           ? S3Config.fromMap(
               Map<String, dynamic>.from(yaml['s3'] as Map))
+          : null,
+      s3Collaboration: yaml.containsKey('s3_collaboration')
+          ? S3Config.fromMap(
+              Map<String, dynamic>.from(yaml['s3_collaboration'] as Map))
           : null,
       beecountCloud: yaml.containsKey('beecount_cloud')
           ? BeeCountCloudConfig.fromMap(
@@ -349,6 +358,11 @@ class S3Config {
   final String bucket;
   final bool? useSSL;
   final int? port;
+
+  // 注意：S3 云端协同的同步密码（端到端加密口令）故意不在这里。口令由用户自己
+  // 记住，不写进导出文件 —— 否则 yaml 同时带着 secret_key 和口令，泄露一份就
+  // 等于交出明文账本。导入方拿到的 s3_collaboration 配置因此是 invalid 的
+  // （见 CloudServiceConfig.valid），云服务页会显示为待配置，用户补填口令即可启用。
 
   const S3Config({
     required this.endpoint,
@@ -1224,6 +1238,7 @@ class ConfigExportService {
         hasAppSettings: doc.containsKey('supabase') ||
             doc.containsKey('webdav') ||
             doc.containsKey('s3') ||
+            doc.containsKey('s3_collaboration') ||
             doc.containsKey('app_settings'),
         hasAi: doc.containsKey('ai'),
       );
@@ -1307,6 +1322,27 @@ class ConfigExportService {
         }
       } catch (e) {
         logger.warning('ConfigExport', '读取S3配置失败: $e');
+      }
+    }
+
+    S3Config? s3CollaborationConfig;
+    final s3CollaborationRaw = prefs.getString('cloud_s3_collaboration_cfg');
+    if (s3CollaborationRaw != null) {
+      try {
+        final cfg = decodeCloudConfig(s3CollaborationRaw);
+        if (cfg.type == CloudBackendType.s3Collaboration && cfg.valid) {
+          s3CollaborationConfig = S3Config(
+            endpoint: cfg.s3Endpoint!,
+            region: cfg.s3Region ?? 'us-east-1',
+            accessKey: cfg.s3AccessKey!,
+            secretKey: cfg.s3SecretKey!,
+            bucket: cfg.s3Bucket!,
+            useSSL: cfg.s3UseSSL,
+            port: cfg.s3Port,
+          );
+        }
+      } catch (e) {
+        logger.warning('ConfigExport', '读取S3协同配置失败: $e');
       }
     }
 
@@ -1714,6 +1750,8 @@ class ConfigExportService {
     final exportSupabase = options.appSettings ? supabaseConfig : null;
     final exportWebdav = options.appSettings ? webdavConfig : null;
     final exportS3 = options.appSettings ? s3Config : null;
+    final exportS3Collaboration =
+        options.appSettings ? s3CollaborationConfig : null;
     final exportBeecountCloud =
         options.appSettings ? beecountCloudConfig : null;
     final exportAi = options.ai ? aiConfig : null;
@@ -1728,6 +1766,7 @@ class ConfigExportService {
       supabase: exportSupabase,
       webdav: exportWebdav,
       s3: exportS3,
+      s3Collaboration: exportS3Collaboration,
       beecountCloud: exportBeecountCloud,
       ai: exportAi,
       appSettings: exportAppSettings,
@@ -1784,6 +1823,23 @@ class ConfigExportService {
     if (yamlMap.containsKey('s3')) {
       buffer.writeln('s3:');
       final s3 = yamlMap['s3'] as Map<String, dynamic>;
+      buffer.writeln('  endpoint: "${s3['endpoint']}"');
+      buffer.writeln('  region: "${s3['region']}"');
+      buffer.writeln('  access_key: "${s3['access_key']}"');
+      buffer.writeln('  secret_key: "${s3['secret_key']}"');
+      buffer.writeln('  bucket: "${s3['bucket']}"');
+      if (s3.containsKey('use_ssl')) {
+        buffer.writeln('  use_ssl: ${s3['use_ssl']}');
+      }
+      if (s3.containsKey('port')) {
+        buffer.writeln('  port: ${s3['port']}');
+      }
+      buffer.writeln();
+    }
+
+    if (yamlMap.containsKey('s3_collaboration')) {
+      buffer.writeln('s3_collaboration:');
+      final s3 = yamlMap['s3_collaboration'] as Map<String, dynamic>;
       buffer.writeln('  endpoint: "${s3['endpoint']}"');
       buffer.writeln('  region: "${s3['region']}"');
       buffer.writeln('  access_key: "${s3['access_key']}"');
@@ -2272,6 +2328,24 @@ class ConfigExportService {
       );
       await prefs.setString('cloud_s3_cfg', encodeCloudConfig(s3Cfg));
       logger.info('ConfigImport', 'S3配置已导入');
+    }
+
+    if (options.appSettings && config.s3Collaboration != null) {
+      final s3 = config.s3Collaboration!;
+      final s3Cfg = CloudServiceConfig(
+        type: CloudBackendType.s3Collaboration,
+        name: 'S3 云端协同',
+        s3Endpoint: s3.endpoint,
+        s3Region: s3.region,
+        s3AccessKey: s3.accessKey,
+        s3SecretKey: s3.secretKey,
+        s3Bucket: s3.bucket,
+        s3UseSSL: s3.useSSL,
+        s3Port: s3.port,
+      );
+      await prefs.setString(
+          'cloud_s3_collaboration_cfg', encodeCloudConfig(s3Cfg));
+      logger.info('ConfigImport', 'S3协同配置已导入（同步密码需用户手动补填后才能启用）');
     }
 
     // 导入 BeeCount Cloud 配置（base_url + 可选 email/password）。

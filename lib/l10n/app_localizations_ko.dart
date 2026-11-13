@@ -1879,7 +1879,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get mineLogoutButton => '로그아웃';
 
   @override
-  String get mineAutoSyncTitle => '가계부 자동 동기화';
+  String get mineAutoSyncTitle => '자동 동기화';
 
   @override
   String get mineAutoSyncSubtitle => '기록 후 클라우드에 자동 업로드';

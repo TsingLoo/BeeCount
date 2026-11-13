@@ -42,7 +42,8 @@ String _sanitizeString(String? input) {
 /// - categories: 分类列表（name, kind, level, icon, parentName）
 /// - tags: 标签列表（name, color）
 /// - items: 交易明细（type, amount, categoryName, categoryKind, happenedAt, note, tags）
-Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
+Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId,
+    {bool allowMissingLedger = false}) async {
   logger.debug('TransactionsJson', '开始导出账本 $ledgerId');
 
   final txs = await (db.select(db.transactions)
@@ -93,6 +94,10 @@ Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
   final usedCatIds = txs.map((t) => t.categoryId).whereType<int>().toSet();
   final cats = <int, Map<String, dynamic>>{};
   final allCategoriesSet = <int>{}; // 存储所有相关分类ID（包括父分类）
+  if (allowMissingLedger) {
+    allCategoriesSet.addAll(
+        (await db.select(db.categories).get()).map((category) => category.id));
+  }
 
   for (final cid in usedCatIds) {
     final c = await (db.select(db.categories)..where((c) => c.id.equals(cid)))
@@ -124,6 +129,12 @@ Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
     if (a != null) {
       accounts.add(a);
       accountIdToName[a.id] = _sanitizeString(a.name);
+    }
+  }
+  if (allowMissingLedger) {
+    final included = accounts.map((account) => account.id).toSet();
+    for (final account in await db.select(db.accounts).get()) {
+      if (included.add(account.id)) accounts.add(account);
     }
   }
   final accountItems = accounts
@@ -264,6 +275,11 @@ Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
   }
 
   // 构建标签列表
+  if (allowMissingLedger) {
+    for (final tag in await db.select(db.tags).get()) {
+      allUsedTags[tag.id] = tag;
+    }
+  }
   final tagItems = allUsedTags.values.map((tag) {
     final tagItem = <String, dynamic>{
       'name': _sanitizeString(tag.name),
@@ -275,7 +291,7 @@ Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
   }).toList();
 
   // 检查账本是否存在
-  if (ledger == null) {
+  if (ledger == null && !allowMissingLedger) {
     logger.error('TransactionsJson', '账本 $ledgerId 不存在！');
     throw Exception(resolveAppLocalizations(null).ledgerMissing);
   }
@@ -284,9 +300,10 @@ Future<String> exportTransactionsJson(BeeDatabase db, int ledgerId) async {
     'version': 6, // 版本升级,新增 syncId 用于跨设备同步
     'exportedAt': DateTime.now().toUtc().toIso8601String(),
     'ledgerId': ledgerId,
-    'ledgerName': ledger.name,
-    'currency': ledger.currency,
-    'monthStartDay': ledger.monthStartDay,
+    'ledgerName': ledger?.name ?? '',
+    'currency': ledger?.currency ?? 'CNY',
+    'monthStartDay': ledger?.monthStartDay ?? 1,
+    if (ledger == null) 'unassigned': true,
     'count': items.length,
     'accounts': accountItems,
     'categories': categoryItems,

@@ -1879,7 +1879,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mineLogoutButton => 'Logout';
 
   @override
-  String get mineAutoSyncTitle => 'Auto sync ledger';
+  String get mineAutoSyncTitle => 'Auto sync';
 
   @override
   String get mineAutoSyncSubtitle => 'Auto upload to cloud after recording';

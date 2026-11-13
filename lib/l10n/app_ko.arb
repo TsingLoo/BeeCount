@@ -481,7 +481,7 @@
   "mineLogoutConfirmTitle": "로그아웃",
   "mineLogoutConfirmMessage": "로그아웃하시겠습니까?\n로그아웃하면 클라우드 동기화를 사용할 수 없습니다.",
   "mineLogoutButton": "로그아웃",
-  "mineAutoSyncTitle": "가계부 자동 동기화",
+  "mineAutoSyncTitle": "자동 동기화",
   "mineAutoSyncSubtitle": "기록 후 클라우드에 자동 업로드",
   "mineAutoSyncNeedLogin": "사용하려면 로그인이 필요합니다",
   "mineImportProgressTitle": "백그라운드에서 가져오는 중...",

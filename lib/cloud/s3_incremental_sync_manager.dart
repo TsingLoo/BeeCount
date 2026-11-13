@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../data/db.dart';
 import '../models/ledger_display_item.dart';
 import '../services/data_import_service.dart';
+import '../utils/app_localizations_resolver.dart';
 import 'sync_diff_service.dart';
 import 's3_encrypted_storage.dart';
 import 'transactions_json.dart';
@@ -64,9 +65,9 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
     if (remoteId != null) _remoteLedgerIds[ledgerId] = remoteId;
   }
   String _cursorKey(int ledgerId, String deviceId) =>
-      's3_journal_$_namespace.$ledgerId.$deviceId';
+      's3_journal_$_namespace.$ledgerId.${_remoteId(ledgerId) == 0 ? 'unassigned.' : ''}$deviceId';
   String _entityVersionKey(int ledgerId, String syncId) =>
-      's3_journal_$_namespace.$ledgerId.entity.$syncId';
+      's3_journal_$_namespace.$ledgerId.${_remoteId(ledgerId) == 0 ? 'unassigned.' : ''}entity.$syncId';
 
   /// Publish local edits before applying remote edits, so an offline edit is
   /// durable even if the other device changed the same transaction meanwhile.
@@ -75,18 +76,30 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
     if (active != null) return active;
     final work = () async {
       var applied = 0;
+      final ledger = await (db.select(db.ledgers)
+            ..where((row) => row.id.equals(ledgerId)))
+          .getSingleOrNull();
+      if (ledger == null) {
+        final anyLedger = await (db.select(db.ledgers)..limit(1)).get();
+        if (anyLedger.isNotEmpty) {
+          throw StateError(resolveAppLocalizations(null).ledgerMissing);
+        }
+        _remoteLedgerIds[ledgerId] = 0;
+      } else if (_remoteLedgerIds[ledgerId] == 0) {
+        _remoteLedgerIds.remove(ledgerId);
+      }
       await _ensurePassword();
       final prefs = await SharedPreferences.getInstance();
       _loadMapping(ledgerId, prefs);
+      if (ledger == null) _remoteLedgerIds[ledgerId] = 0;
       if (prefs.getInt(_mappingKey(ledgerId)) == null) {
         final discovery = await _storage.download(path: _discoveryPath(ledgerId));
         if (discovery != null) {
           final remote = jsonDecode(discovery) as Map<String, dynamic>;
-          final localLedger = await (db.select(db.ledgers)
-                ..where((row) => row.id.equals(ledgerId)))
-              .getSingle();
-          if ((remote['ledgerSyncId'] as String? ?? ledgerId.toString()) !=
-              (localLedger.syncId ?? ledgerId.toString())) {
+          final expected = ledger?.syncId ??
+              (ledger == null ? '__unassigned__' : ledgerId.toString());
+          if ((remote['ledgerSyncId'] as String? ?? ledgerId.toString()) != expected ||
+              (remote['unassigned'] == true) != (ledger == null)) {
             throw StateError(
                 'S3 remote ledger ID belongs to another ledger; discover remote ledgers before syncing');
           }
@@ -287,12 +300,18 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
 
   Future<void> _push(int ledgerId, SharedPreferences prefs, String deviceId) async {
     final cursorKey = _cursorKey(ledgerId, deviceId);
-    final snapshot = jsonDecode(await exportTransactionsJson(db, ledgerId))
+    final unassigned = _remoteId(ledgerId) == 0;
+    final snapshot = jsonDecode(await exportTransactionsJson(db, ledgerId,
+        allowMissingLedger: unassigned))
         as Map<String, dynamic>;
-    final ledger = await (db.select(db.ledgers)
-          ..where((row) => row.id.equals(ledgerId)))
-        .getSingle();
-    snapshot['ledgerSyncId'] = ledger.syncId ?? ledgerId.toString();
+    if (unassigned) {
+      snapshot['ledgerSyncId'] = '__unassigned__';
+    } else {
+      final ledger = await (db.select(db.ledgers)
+            ..where((row) => row.id.equals(ledgerId)))
+          .getSingle();
+      snapshot['ledgerSyncId'] = ledger.syncId ?? ledgerId.toString();
+    }
     final bootstrapKey = '$cursorKey.bootstrap';
     if (!(prefs.getBool(bootstrapKey) ?? false)) {
       await _storage.upload(
@@ -363,8 +382,26 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
   @override
   Future<SyncStatus> getStatus({required int ledgerId}) async {
     try {
+      final ledger = await (db.select(db.ledgers)
+            ..where((row) => row.id.equals(ledgerId)))
+          .getSingleOrNull();
+      if (ledger == null) {
+        final anyLedger = await (db.select(db.ledgers)..limit(1)).get();
+        if (anyLedger.isNotEmpty) {
+          return SyncStatus(
+              diff: SyncDiff.error,
+              localCount: 0,
+              localFingerprint: '',
+              message: resolveAppLocalizations(null).ledgerMissing);
+        }
+      }
       final prefs = await SharedPreferences.getInstance();
       _loadMapping(ledgerId, prefs);
+      if (ledger == null) {
+        _remoteLedgerIds[ledgerId] = 0;
+      } else if (_remoteLedgerIds[ledgerId] == 0) {
+        _remoteLedgerIds.remove(ledgerId);
+      }
       final ownId = await _deviceId(prefs);
       final cursor = prefs.getInt(_cursorKey(ledgerId, ownId)) ?? -1;
       final local = await (db.select(db.localChanges)
@@ -478,15 +515,27 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
     if (existingBySyncId != null) {
       ledgerId = existingBySyncId.id;
     } else {
-      final occupied = await (db.select(db.ledgers)
-            ..where((t) => t.id.equals(remoteId)))
-          .getSingleOrNull();
-      ledgerId = await db.into(db.ledgers).insert(LedgersCompanion.insert(
-            id: occupied == null ? d.Value(remoteId) : const d.Value.absent(),
-            name: name,
-            currency: d.Value(currency),
-            syncId: d.Value(remoteSyncId),
-          ));
+      ledgerId = await db.transaction(() async {
+        final hadLedgers =
+            (await (db.select(db.ledgers)..limit(1)).get()).isNotEmpty;
+        final occupied = await (db.select(db.ledgers)
+              ..where((t) => t.id.equals(remoteId)))
+            .getSingleOrNull();
+        final id = await db.into(db.ledgers).insert(LedgersCompanion.insert(
+              id: occupied == null ? d.Value(remoteId) : const d.Value.absent(),
+              name: name,
+              currency: d.Value(currency),
+              syncId: d.Value(remoteSyncId),
+            ));
+        if (!hadLedgers) {
+          await db.update(db.transactions).write(
+              TransactionsCompanion(ledgerId: d.Value(id)));
+          await (db.update(db.localChanges)
+                ..where((change) => change.entityType.equals('transaction')))
+              .write(LocalChangesCompanion(ledgerId: d.Value(id)));
+        }
+        return id;
+      });
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_mappingKey(ledgerId), remoteId);
@@ -525,6 +574,7 @@ class S3IncrementalSyncManager extends TransactionsSyncManager {
       final raw = await _storage.download(path: file.path);
       if (raw == null) continue;
       final json = jsonDecode(raw) as Map<String, dynamic>;
+      if (json['unassigned'] == true) continue;
       final name = json['ledgerName'] as String? ?? 'Unknown';
       final remoteSyncId = json['ledgerSyncId'] as String? ??
           remoteId.toString();

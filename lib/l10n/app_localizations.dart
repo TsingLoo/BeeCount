@@ -3557,7 +3557,7 @@ abstract class AppLocalizations {
   /// No description provided for @mineAutoSyncTitle.
   ///
   /// In en, this message translates to:
-  /// **'Auto sync ledger'**
+  /// **'Auto sync'**
   String get mineAutoSyncTitle;
 
   /// No description provided for @mineAutoSyncSubtitle.

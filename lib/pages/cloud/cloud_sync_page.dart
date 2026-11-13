@@ -12,6 +12,7 @@ import '../../l10n/app_localizations.dart';
 import '../../services/billing/post_processor.dart';
 import '../../cloud/sync_service.dart';
 import '../../cloud/transactions_sync_manager.dart';
+import '../../cloud/s3_incremental_sync_manager.dart';
 import '../auth/login_page.dart';
 import 'sync_preview_dialog.dart';
 
@@ -59,7 +60,7 @@ class _CloudSyncPageState extends ConsumerState<CloudSyncPage> {
     final sync = ref.watch(syncServiceProvider);
     final ledgerId = ref.watch(currentLedgerIdProvider);
 
-    if (ledgerId == 0) {
+    if (ledgerId == 0 && sync is! S3IncrementalSyncManager) {
       return Scaffold(
         backgroundColor: BeeTokens.scaffoldBackground(context),
         body: Column(
@@ -522,7 +523,18 @@ class _CloudSyncPageState extends ConsumerState<CloudSyncPage> {
                                       ? sync
                                       : null;
 
-                                  if (syncManager != null) {
+                                  if (sync is S3IncrementalSyncManager) {
+                                    final res = await sync
+                                        .downloadAndRestoreToCurrentLedger(
+                                            ledgerId: ledgerId);
+                                    if (!context.mounted) return;
+                                    await AppDialog.info(context,
+                                        title: AppLocalizations.of(context)
+                                            .mineDownloadComplete,
+                                        message: AppLocalizations.of(context)
+                                            .mineDownloadResult(res.inserted));
+                                    PostProcessor.runAfterDownload(ref);
+                                  } else if (syncManager != null) {
                                     final previewResult = await syncManager.downloadAndPreview(
                                       ledgerId: ledgerId,
                                     );

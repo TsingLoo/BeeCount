@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:drift/drift.dart' as d;
 
 import 'pages/main/home_page.dart';
 import 'pages/main/analytics_page.dart';
@@ -78,7 +79,12 @@ class _BeeAppState extends ConsumerState<BeeApp>
   // 重复跑浪费 HTTP。
   DateTime? _lastInitialCloudSyncTriggeredAt;
   Timer? _s3PollTimer;
+  Timer? _s3ChangeDebounce;
+  StreamSubscription<int>? _s3ChangeSubscription;
+  int? _lastS3ChangeId;
+  int _lastS3StatusRefreshChangeId = 0;
   bool _s3PollInProgress = false;
+  bool _s3PollPending = false;
 
   // 记账按钮相关状态
   late AnimationController _expandController;
@@ -109,10 +115,36 @@ class _BeeAppState extends ConsumerState<BeeApp>
         _pollS3Incremental();
       }
     });
+    _watchS3LocalChanges();
     // 延迟监听 AppLink，确保 context 可用
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAppLinkListener();
       _setupQuickActions();
+    });
+  }
+
+  void _watchS3LocalChanges() {
+    final db = ref.read(databaseProvider);
+    _s3ChangeSubscription = (db.select(db.localChanges)
+          ..where((c) =>
+              c.entityType.isIn(['transaction', 'account', 'category', 'tag']))
+          ..orderBy([(c) => d.OrderingTerm.desc(c.id)])
+          ..limit(1))
+        .watch()
+        .map((rows) => rows.isEmpty ? 0 : rows.first.id)
+        .listen((latestId) {
+      final previous = _lastS3ChangeId;
+      _lastS3ChangeId = latestId;
+      if (previous == null || latestId <= previous) return;
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+        return;
+      }
+      _s3ChangeDebounce?.cancel();
+      _s3ChangeDebounce = Timer(const Duration(milliseconds: 300), () {
+        _pollS3Incremental();
+      });
+    }, onError: (Object error, StackTrace stackTrace) {
+      logger.warning('S3Sync', '监听本地变更失败: $error', stackTrace);
     });
   }
 
@@ -223,13 +255,18 @@ class _BeeAppState extends ConsumerState<BeeApp>
   }
 
   Future<void> _pollS3Incremental() async {
-    if (_s3PollInProgress || !mounted) return;
+    if (!mounted) return;
+    if (_s3PollInProgress) {
+      _s3PollPending = true;
+      return;
+    }
     final sync = ref.read(syncServiceProvider);
     if (sync is! S3IncrementalSyncManager) return;
-    final prefs = await SharedPreferences.getInstance();
-    if (!(prefs.getBool('auto_sync') ?? false)) return;
+    final changeIdAtStart = _lastS3ChangeId ?? 0;
     _s3PollInProgress = true;
     try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!(prefs.getBool('auto_sync') ?? false)) return;
       final remoteLedgers = await sync.getRemoteLedgers();
       var restoredAny = false;
       for (final remote in remoteLedgers) {
@@ -245,20 +282,37 @@ class _BeeAppState extends ConsumerState<BeeApp>
       final db = ref.read(databaseProvider);
       final ledgers = await db.select(db.ledgers).get();
       var applied = 0;
-      for (final ledger in ledgers) {
-        applied += await sync.syncIncremental(ledgerId: ledger.id);
+      if (ledgers.isEmpty) {
+        applied += await sync.syncIncremental(
+            ledgerId: ref.read(currentLedgerIdProvider));
+      } else {
+        for (final ledger in ledgers) {
+          applied += await sync.syncIncremental(ledgerId: ledger.id);
+        }
       }
       if ((applied > 0 || restoredAny) && mounted) {
         ref.read(ledgerListRefreshProvider.notifier).state++;
         ref.read(syncGenerationProvider.notifier).state++;
         ref.read(syncStatusRefreshProvider.notifier).state++;
       }
+      if (changeIdAtStart > _lastS3StatusRefreshChangeId && mounted) {
+        _lastS3StatusRefreshChangeId = changeIdAtStart;
+        if (applied == 0 && !restoredAny) {
+          ref.read(syncStatusRefreshProvider.notifier).state++;
+        }
+      }
       if (mounted) ref.read(sp.lastSyncErrorProvider.notifier).state = null;
     } catch (e) {
       logger.warning('S3Sync', '增量拉取失败: $e');
-      if (mounted) ref.read(sp.lastSyncErrorProvider.notifier).state = e.toString();
+      if (mounted) {
+        ref.read(sp.lastSyncErrorProvider.notifier).state = e.toString();
+      }
     } finally {
       _s3PollInProgress = false;
+      if (_s3PollPending && mounted) {
+        _s3PollPending = false;
+        Future.microtask(_pollS3Incremental);
+      }
     }
   }
 
@@ -297,8 +351,7 @@ class _BeeAppState extends ConsumerState<BeeApp>
           logger.info('AppStart', '本地无账本,跳过首次同步');
           return;
         }
-        logger.info('AppStart',
-            'BeeCount Cloud 首次同步: 本地账本数=${ledgers.length}');
+        logger.info('AppStart', 'BeeCount Cloud 首次同步: 本地账本数=${ledgers.length}');
         final overallStart = DateTime.now();
 
         // ========== Phase 1: 用户级一次性 ==========
@@ -316,10 +369,10 @@ class _BeeAppState extends ConsumerState<BeeApp>
         List<dynamic>? remoteLedgers;
         try {
           remoteLedgers = await engine.provider.storage.list(path: '');
-          logger.info(
-              'AppStart', 'Phase1: 远端账本=${remoteLedgers.length}');
+          logger.info('AppStart', 'Phase1: 远端账本=${remoteLedgers.length}');
         } catch (e, st) {
-          logger.warning('AppStart', 'Phase1: 拉 remote_ledgers 失败,fallback', st);
+          logger.warning(
+              'AppStart', 'Phase1: 拉 remote_ledgers 失败,fallback', st);
           logger.warning('AppStart', 'error: $e');
         }
 
@@ -339,7 +392,8 @@ class _BeeAppState extends ConsumerState<BeeApp>
         //       user-global 的新增/重命名也能推上去(原来 Phase 2 skip 时会漏)
         try {
           final pushed = await engine.pushUserGlobalEntities();
-          logger.info('AppStart', 'Phase1: pushUserGlobalEntities pushed=$pushed');
+          logger.info(
+              'AppStart', 'Phase1: pushUserGlobalEntities pushed=$pushed');
         } catch (e, st) {
           logger.error('AppStart', 'Phase1: pushUserGlobalEntities 失败', e, st);
         }
@@ -417,8 +471,7 @@ class _BeeAppState extends ConsumerState<BeeApp>
 
         final totalPushed = results.fold<int>(0, (a, b) => a + b.pushed);
         final skipped = results.where((r) => r.skipped).length;
-        final totalMs =
-            DateTime.now().difference(overallStart).inMilliseconds;
+        final totalMs = DateTime.now().difference(overallStart).inMilliseconds;
         logger.info('AppStart',
             'BeeCount Cloud 首次同步完成: synced=${ledgers.length - skipped} skipped=$skipped pushed=$totalPushed 总耗时 ${totalMs}ms');
         ref.read(syncStatusRefreshProvider.notifier).state++;
@@ -482,20 +535,24 @@ class _BeeAppState extends ConsumerState<BeeApp>
     String? page,
   }) {
     SharedPreferences.getInstance().then((p) {
-      p.setString(_kPendingDeepLink, jsonEncode({
-        'action': action.name,
-        'type': type,
-        if (categoryId != null) 'categoryId': categoryId,
-        if (page != null) 'page': page,
-        'ts': DateTime.now().millisecondsSinceEpoch,
-      }));
+      p.setString(
+          _kPendingDeepLink,
+          jsonEncode({
+            'action': action.name,
+            'type': type,
+            if (categoryId != null) 'categoryId': categoryId,
+            if (page != null) 'page': page,
+            'ts': DateTime.now().millisecondsSinceEpoch,
+          }));
     }).catchError((_) {});
   }
 
   void _drainPendingDeepLink({String trigger = ''}) {
     if (!mounted) return;
     if (ref.read(appInitStateProvider) != AppInitState.ready) return;
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
     // 重建有时在 resumed 之后还会再发生一次:延迟一拍再认领,只在「存活过这段缓冲期」的
     // 最终页面树上打开。若本页在缓冲期内被销毁(重建),timer 随 dispose 取消,新页面会
     // 重新排程,自然落到稳定的页面树上。
@@ -508,7 +565,9 @@ class _BeeAppState extends ConsumerState<BeeApp>
     if (!mounted) return;
     // 必须就绪 + 前台稳定:冷启动/主题变更的重建窗口(inactive/hidden)里打开会被丢弃
     if (ref.read(appInitStateProvider) != AppInitState.ready) return;
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
 
     SharedPreferences prefs;
     try {
@@ -633,6 +692,8 @@ class _BeeAppState extends ConsumerState<BeeApp>
   @override
   void dispose() {
     _s3PollTimer?.cancel();
+    _s3ChangeDebounce?.cancel();
+    _s3ChangeSubscription?.cancel();
     _drainTimer?.cancel();
     _appLinkSubscription?.close();
     _removeOverlay();
@@ -1025,18 +1086,25 @@ class _BeeBottomBar extends StatelessWidget {
                   Positioned.fill(
                       child: IgnorePointer(
                           child: SkinAnimationScope(
-                              child: skin!.tabBarBuilder!(
-                                  primaryColor, isDark)))),
+                              child:
+                                  skin!.tabBarBuilder!(primaryColor, isDark)))),
                 Row(
                   children: [
                     _buildTabItem(0, Icons.receipt_long_outlined,
                         Icons.receipt_long, l10n.tabHome, inactiveColor),
-                    _buildTabItem(1, Icons.pie_chart_outline_rounded,
-                        Icons.pie_chart_rounded, l10n.tabInsights, inactiveColor),
+                    _buildTabItem(
+                        1,
+                        Icons.pie_chart_outline_rounded,
+                        Icons.pie_chart_rounded,
+                        l10n.tabInsights,
+                        inactiveColor),
                     // 中间记账按钮（作为 Tab 样式）
                     _buildCenterTabItem(inactiveColor),
-                    _buildTabItem(2, Icons.account_balance_wallet_outlined,
-                        Icons.account_balance_wallet, l10n.tabAssets,
+                    _buildTabItem(
+                        2,
+                        Icons.account_balance_wallet_outlined,
+                        Icons.account_balance_wallet,
+                        l10n.tabAssets,
                         inactiveColor),
                     _buildAvatarTabItem(3, l10n.tabMine, inactiveColor),
                   ],
@@ -1049,8 +1117,8 @@ class _BeeBottomBar extends StatelessWidget {
     );
   }
 
-  Widget _buildTabItem(
-      int index, IconData icon, IconData activeIcon, String label, Color inactiveColor,
+  Widget _buildTabItem(int index, IconData icon, IconData activeIcon,
+      String label, Color inactiveColor,
       {String? dotAnchor}) {
     final isActive = index == currentIndex;
     final iconColor = isActive ? primaryColor : inactiveColor;
@@ -1159,8 +1227,10 @@ class _BeeBottomBar extends StatelessWidget {
         ),
       );
     } else {
-      iconWidget = Icon(isActive ? Icons.person_rounded : Icons.person_outline_rounded,
-          color: isActive ? primaryColor : inactiveColor, size: 24);
+      iconWidget = Icon(
+          isActive ? Icons.person_rounded : Icons.person_outline_rounded,
+          color: isActive ? primaryColor : inactiveColor,
+          size: 24);
     }
 
     return Expanded(

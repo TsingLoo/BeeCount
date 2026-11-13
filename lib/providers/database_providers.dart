@@ -68,27 +68,32 @@ final ledgersStreamProvider = StreamProvider<List<Ledger>>((ref) {
   return repo.watchLedgers();
 });
 
-final _currentLedgerPersist = Provider<void>((ref) {
-  // load on first read
-  () async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getInt('current_ledger_id');
-      if (saved != null) {
-        final st = ref.read(currentLedgerIdProvider);
-        if (st != saved) {
-          ref.read(currentLedgerIdProvider.notifier).state = saved;
-        }
-      }
-    } catch (_) {}
-  }();
-  // persist on change
+final _currentLedgerPersist = FutureProvider<void>((ref) async {
+  // Register before loading so a selection made during startup is preserved.
+  var selectedDuringLoad = false;
   ref.listen<int>(currentLedgerIdProvider, (prev, next) async {
+    selectedDuringLoad = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('current_ledger_id', next);
     } catch (_) {}
   });
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getInt('current_ledger_id');
+  final db = ref.read(databaseProvider);
+  final ledgers = await db.select(db.ledgers).get();
+  if (ledgers.isEmpty) return;
+  final current = ref.read(currentLedgerIdProvider);
+  final preferred = selectedDuringLoad ? current : saved ?? current;
+  final selected = ledgers.any((ledger) => ledger.id == preferred)
+      ? preferred
+      : ledgers.first.id;
+  if (selected != current) {
+    ref.read(currentLedgerIdProvider.notifier).state = selected;
+  }
+  if (saved != selected) {
+    await prefs.setInt('current_ledger_id', selected);
+  }
 });
 
 // 当账本切换时，顺便触发一次设置页状态刷新（确保"我的"页及时反映）
@@ -102,8 +107,8 @@ final _ledgerChangeListener = Provider<void>((ref) {
 
 // 确保监听器被激活
 final appInitProvider = FutureProvider<void>((ref) async {
-  // 读取以激活监听
   ref.read(_ledgerChangeListener);
+  await ref.read(_currentLedgerPersist.future);
 });
 
 // 分类Provider

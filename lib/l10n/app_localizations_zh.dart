@@ -1879,7 +1879,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mineLogoutButton => '退出';
 
   @override
-  String get mineAutoSyncTitle => '自动同步账本';
+  String get mineAutoSyncTitle => '自动同步';
 
   @override
   String get mineAutoSyncSubtitle => '记账后自动上传到云端';
@@ -10580,7 +10580,7 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get mineLogoutButton => '退出';
 
   @override
-  String get mineAutoSyncTitle => '自動同步帳本';
+  String get mineAutoSyncTitle => '自動同步';
 
   @override
   String get mineAutoSyncSubtitle => '記帳後自動上傳到雲端';

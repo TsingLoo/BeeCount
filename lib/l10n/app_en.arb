@@ -803,7 +803,7 @@
   "mineLogoutConfirmTitle": "Logout",
   "mineLogoutConfirmMessage": "Are you sure you want to logout?\nYou won't be able to use cloud sync after logout.",
   "mineLogoutButton": "Logout",
-  "mineAutoSyncTitle": "Auto sync ledger",
+  "mineAutoSyncTitle": "Auto sync",
   "mineAutoSyncSubtitle": "Auto upload to cloud after recording",
   "mineAutoSyncNeedLogin": "Login required to enable",
   "mineImportProgressTitle": "Importing in background...",

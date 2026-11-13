@@ -735,7 +735,7 @@
   "mineLogoutConfirmTitle": "退出登录",
   "mineLogoutConfirmMessage": "确定要退出当前账号登录吗？\n退出后将无法使用云同步功能。",
   "mineLogoutButton": "退出",
-  "mineAutoSyncTitle": "自动同步账本",
+  "mineAutoSyncTitle": "自动同步",
   "mineAutoSyncSubtitle": "记账后自动上传到云端",
   "mineAutoSyncNeedLogin": "需登录后可开启",
   "mineImportProgressTitle": "后台导入中…",

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:beecount/cloud/s3_encrypted_storage.dart';
 import 'package:beecount/cloud/s3_incremental_sync_manager.dart';
+import 'package:beecount/cloud/sync_service.dart' show SyncDiff;
 import 'package:beecount/cloud/sync/change_tracker.dart';
 import 'package:beecount/data/db.dart';
 import 'package:beecount/data/repositories/local/local_repository.dart';
@@ -133,6 +134,179 @@ void main() {
 
     expect(await hasTracker(CloudBackendType.s3), isFalse);
     expect(await hasTracker(CloudBackendType.s3Collaboration), isTrue);
+  });
+
+  test('missing local ledger is reported before writing collaboration data', () async {
+    SharedPreferences.setMockInitialValues({});
+    final storage = _MemoryStorage();
+    final db = BeeDatabase.forTesting(NativeDatabase.memory());
+    final config = CloudServiceConfig(
+      type: CloudBackendType.s3Collaboration,
+      name: 'test',
+      s3Endpoint: 'example.test',
+      s3Bucket: 'bucket',
+      s3AccessKey: 'key',
+      s3SecretKey: 'secret',
+      s3SyncPassword: 'correct horse battery staple',
+    );
+    final sync = S3IncrementalSyncManager(
+      config: config,
+      db: db,
+      repo: LocalRepository(db, changeTracker: ChangeTracker(db)),
+      provider: _MemoryProvider(storage),
+    );
+    try {
+      await db.into(db.ledgers).insert(
+          LedgersCompanion.insert(id: const Value(7), name: 'Other'));
+      expect((await sync.getStatus(ledgerId: 1)).diff, SyncDiff.error);
+      await expectLater(sync.uploadCurrentLedger(ledgerId: 1), throwsStateError);
+      expect(storage.objects, isEmpty);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('unassigned transactions sync without creating a visible ledger', () async {
+    final storage = _MemoryStorage();
+    final config = CloudServiceConfig(
+      type: CloudBackendType.s3Collaboration,
+      name: 'test',
+      s3Endpoint: 'example.test',
+      s3Bucket: 'bucket',
+      s3AccessKey: 'key',
+      s3SecretKey: 'secret',
+      s3SyncPassword: 'correct horse battery staple',
+    );
+    final dbA = BeeDatabase.forTesting(NativeDatabase.memory());
+    final dbB = BeeDatabase.forTesting(NativeDatabase.memory());
+    final a = S3IncrementalSyncManager(
+      config: config,
+      db: dbA,
+      repo: LocalRepository(dbA, changeTracker: ChangeTracker(dbA)),
+      provider: _MemoryProvider(storage),
+    );
+    final b = S3IncrementalSyncManager(
+      config: config,
+      db: dbB,
+      repo: LocalRepository(dbB, changeTracker: ChangeTracker(dbB)),
+      provider: _MemoryProvider(storage),
+    );
+    try {
+      await dbA.into(dbA.accounts).insert(
+          AccountsCompanion.insert(ledgerId: 0, name: 'Wallet'));
+      await dbA.into(dbA.categories).insert(
+          CategoriesCompanion.insert(name: 'Food', kind: 'expense'));
+      await dbA.into(dbA.tags).insert(TagsCompanion.insert(name: 'Imported'));
+      for (var i = 0; i < 15; i++) {
+        await dbA.into(dbA.transactions).insert(TransactionsCompanion.insert(
+              ledgerId: 7,
+              type: 'expense',
+              amount: i + 1,
+              syncId: Value('unassigned-$i'),
+            ));
+      }
+      SharedPreferences.setMockInitialValues({'s3_collaboration_device_id': 'A'});
+      await a.uploadCurrentLedger(ledgerId: 7);
+      expect(storage.objects,
+          contains('beecount-sync/v3/ledgers/ledger_0.json'));
+      expect(await dbA.select(dbA.ledgers).get(), isEmpty);
+
+      SharedPreferences.setMockInitialValues({'s3_collaboration_device_id': 'B'});
+      expect(await b.getRemoteLedgers(), isEmpty);
+      expect((await b.downloadAndRestoreToCurrentLedger(ledgerId: 1)).inserted,
+          15);
+      final received = await dbB.select(dbB.transactions).get();
+      expect(received, hasLength(15));
+      expect(received.every((tx) => tx.ledgerId == 1), isTrue);
+      expect(await dbB.select(dbB.ledgers).get(), isEmpty);
+      expect((await dbB.select(dbB.accounts).get()).single.name, 'Wallet');
+      expect((await dbB.select(dbB.categories).get()).single.name, 'Food');
+      expect((await dbB.select(dbB.tags).get()).single.name, 'Imported');
+      expect((await b.getStatus(ledgerId: 1)).diff, SyncDiff.inSync);
+
+      await (dbB.update(dbB.transactions)
+            ..where((tx) => tx.id.equals(received.first.id)))
+          .write(const TransactionsCompanion(amount: Value(42)));
+      await dbB.into(dbB.localChanges).insert(LocalChangesCompanion.insert(
+            entityType: 'transaction',
+            entityId: received.first.id,
+            entitySyncId: received.first.syncId!,
+            ledgerId: 1,
+            action: 'update',
+          ));
+      await b.syncIncremental(ledgerId: 1);
+      SharedPreferences.setMockInitialValues({'s3_collaboration_device_id': 'A'});
+      await a.syncIncremental(ledgerId: 7);
+      final updated = await (dbA.select(dbA.transactions)
+            ..where((tx) => tx.syncId.equals(received.first.syncId!)))
+          .getSingle();
+      expect(updated.amount, 42);
+      expect(await dbA.select(dbA.ledgers).get(), isEmpty);
+
+      final firstLedger = await LocalRepository(dbA).createLedger(name: 'Home');
+      expect((await dbA.select(dbA.transactions).get())
+          .every((tx) => tx.ledgerId == firstLedger), isTrue);
+      await a.syncIncremental(ledgerId: firstLedger);
+      SharedPreferences.setMockInitialValues({'s3_collaboration_device_id': 'B'});
+      final remoteLedgers = await b.getRemoteLedgers();
+      expect(remoteLedgers, hasLength(1));
+      await b.downloadRemoteLedger(
+        name: remoteLedgers.single.name,
+        currency: remoteLedgers.single.currency,
+        remotePath: S3IncrementalSyncManager.remoteLedgerPath(
+            remoteLedgers.single.remoteSyncId!),
+      );
+      expect(await dbB.select(dbB.ledgers).get(), hasLength(1));
+      expect(await dbB.select(dbB.transactions).get(), hasLength(15));
+    } finally {
+      await dbA.close();
+      await dbB.close();
+    }
+  });
+
+  test('enabling automatic S3 sync uploads without a ledger', () async {
+    SharedPreferences.setMockInitialValues({'s3_collaboration_device_id': 'A'});
+    final storage = _MemoryStorage();
+    final db = BeeDatabase.forTesting(NativeDatabase.memory());
+    final sync = S3IncrementalSyncManager(
+      config: CloudServiceConfig(
+        type: CloudBackendType.s3Collaboration,
+        name: 'test',
+        s3Endpoint: 'example.test',
+        s3Bucket: 'bucket',
+        s3AccessKey: 'key',
+        s3SecretKey: 'secret',
+        s3SyncPassword: 'correct horse battery staple',
+      ),
+      db: db,
+      repo: LocalRepository(db, changeTracker: ChangeTracker(db)),
+      provider: _MemoryProvider(storage),
+    );
+    final container = ProviderContainer(overrides: [
+      syncServiceProvider.overrideWithValue(sync),
+      currentLedgerIdProvider.overrideWith((ref) => 7),
+    ]);
+    try {
+      await db.into(db.transactions).insert(TransactionsCompanion.insert(
+            ledgerId: 7,
+            type: 'expense',
+            amount: 15,
+            syncId: const Value('without-ledger'),
+          ));
+      await container.read(autoSyncSetterProvider).set(true);
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!storage.objects.containsKey(
+              'beecount-sync/v3/ledgers/ledger_0.json') &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(storage.objects,
+          contains('beecount-sync/v3/ledgers/ledger_0.json'));
+      expect((await db.select(db.ledgers).get()), isEmpty);
+    } finally {
+      container.dispose();
+      await db.close();
+    }
   });
 
   test('a second device imports the initial ledger without overwriting it', () async {

@@ -104,6 +104,19 @@ class AutoSyncSetter {
     await prefs.setBool('auto_sync', v);
     // 使缓存失效，触发读取最新值
     _ref.invalidate(autoSyncValueProvider);
+    if (v) {
+      final sync = _ref.read(syncServiceProvider);
+      if (sync is S3IncrementalSyncManager) {
+        unawaited(sync
+            .syncIncremental(ledgerId: _ref.read(currentLedgerIdProvider))
+            .then((_) {
+          _ref.read(syncStatusRefreshProvider.notifier).state++;
+        }).catchError((Object error) {
+          logger.warning('S3Sync', '自动同步首次执行失败: $error');
+          _ref.read(lastSyncErrorProvider.notifier).state = error.toString();
+        }));
+      }
+    }
   }
 }
 

@@ -141,13 +141,25 @@ class LocalLedgerRepository implements LedgerRepository {
     // 的 `ledger.syncId ?? ledger.id.toString()` 会 fallback 到本地 int id，
     // 第二台设备本地 int id 不同 → server 会 auto-create 一个 external_id
     // 为本地 int id 字符串的 duplicate ledger。
-    return db.into(db.ledgers).insert(
+    return db.transaction(() async {
+      final hadLedgers = (await (db.select(db.ledgers)..limit(1)).get()).isNotEmpty;
+      final id = await db.into(db.ledgers).insert(
           LedgersCompanion.insert(
             name: name,
             currency: d.Value(currency),
             syncId: d.Value(_uuid.v4()),
           ),
         );
+      if (!hadLedgers) {
+        // Imported entries can exist before the first visible ledger is made.
+        await db.update(db.transactions).write(
+            TransactionsCompanion(ledgerId: d.Value(id)));
+        await (db.update(db.localChanges)
+              ..where((change) => change.entityType.equals('transaction')))
+            .write(LocalChangesCompanion(ledgerId: d.Value(id)));
+      }
+      return id;
+    });
   }
 
   @override

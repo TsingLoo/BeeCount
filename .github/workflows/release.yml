@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "*"
-      - "!*-beta.*"
+      # Beta tags are skipped by the job conditions below.
+      - "v*"
   workflow_dispatch:
     inputs:
       tag_name:

@@ -32,26 +32,23 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
   bool _testingConnection = false;
   final Map<String, bool> _connectionTestResults = {};
   bool _hasAutoTested = false;
-  String _selectedTab = 'offline'; // 'offline' | 'backup' | 'cloud'
+  String? _selectedTab; // null 时跟随当前激活的服务
 
   @override
   void initState() {
     super.initState();
 
-    // 根据当前激活的配置决定初始 Tab
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final activeAsync = ref.read(activeCloudConfigProvider);
-      if (activeAsync.hasValue) {
-        final active = activeAsync.value!;
-        if (active.type == CloudBackendType.beecountCloud ||
-            active.type == CloudBackendType.s3Collaboration) {
-          setState(() => _selectedTab = 'cloud');
-        } else if (active.type != CloudBackendType.local) {
-          setState(() => _selectedTab = 'backup');
-        }
-      }
       _autoTestActiveConnection();
     });
+  }
+
+  String _tabFor(CloudBackendType type) {
+    if (type == CloudBackendType.beecountCloud ||
+        type == CloudBackendType.s3Collaboration) {
+      return 'cloud';
+    }
+    return type == CloudBackendType.local ? 'offline' : 'backup';
   }
 
   Future<void> _autoTestActiveConnection() async {
@@ -62,11 +59,10 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
     final prefs = await SharedPreferences.getInstance();
     final multiDevice = prefs.getBool('multi_device_sync') ?? false;
     if (!multiDevice) return;
+    if (!mounted) return;
 
-    final activeAsync = ref.read(activeCloudConfigProvider);
-    if (!activeAsync.hasValue) return;
-
-    final active = activeAsync.value!;
+    final active = await ref.read(activeCloudConfigProvider.future);
+    if (!mounted) return;
     if (active.type == CloudBackendType.local || !active.valid) return;
 
     // 自动测试当前激活的云服务连接（静默测试，不显示对话框）
@@ -81,6 +77,8 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
     final webdavAsync = ref.watch(webdavConfigProvider);
     final s3Async = ref.watch(s3ConfigProvider);
     final s3CollaborationAsync = ref.watch(s3CollaborationConfigProvider);
+    final selectedTab = _selectedTab ??
+        (activeAsync.hasValue ? _tabFor(activeAsync.value!.type) : null);
 
     return Scaffold(
       backgroundColor: BeeTokens.scaffoldBackground(context),
@@ -122,10 +120,10 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
             ),
           ),
           // 胶囊切换器
-          Padding(
+          if (selectedTab != null) Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: CapsuleSwitcher<String>(
-              selectedValue: _selectedTab,
+              selectedValue: selectedTab,
               options: [
                 CapsuleOption(value: 'offline', label: AppLocalizations.of(context).cloudTabOffline),
                 CapsuleOption(value: 'backup', label: AppLocalizations.of(context).cloudTabBackup),
@@ -139,7 +137,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('${AppLocalizations.of(context).commonError}: $e')),
               data: (active) {
-                if (_selectedTab == 'offline') {
+                if (selectedTab == 'offline') {
                   // ===== 离线模式 =====
                   return ListView(
                     padding: const EdgeInsets.all(16),
@@ -156,7 +154,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                       ),
                     ],
                   );
-                } else if (_selectedTab == 'backup') {
+                } else if (selectedTab == 'backup') {
                   // ===== 备份同步 =====
                   return ListView(
                     padding: const EdgeInsets.all(16),
@@ -321,23 +319,15 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
   Widget _buildConnectionStatus(CloudServiceConfig config) {
     final testResult = _connectionTestResults[config.id];
     final Color statusColor;
-    final IconData statusIcon;
     final String statusText;
 
-    if (testResult == null) {
-      // 未测试
-      statusColor = BeeTokens.warning(context);
-      statusIcon = Icons.help_outline;
-      statusText = AppLocalizations.of(context).cloudStatusNotTested;
-    } else if (testResult) {
+    if (testResult == true) {
       // 测试成功
       statusColor = BeeTokens.success(context);
-      statusIcon = Icons.check_circle_outline;
       statusText = AppLocalizations.of(context).cloudStatusNormal;
     } else {
       // 测试失败
       statusColor = BeeTokens.error(context);
-      statusIcon = Icons.error_outline;
       statusText = AppLocalizations.of(context).cloudStatusFailed;
     }
 
@@ -352,37 +342,39 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(width: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
+            if (testResult != null) ...[
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    statusText,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                    const SizedBox(width: 6),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
           ],
         ),
         const SizedBox(height: 4),
@@ -1571,6 +1563,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
 
       try {
         await ref.read(activeCloudRuntimeProvider.notifier).saveOnly(cfg);
+        _connectionTestResults.remove(cfg.id);
         if (mounted) showToast(context, AppLocalizations.of(context).cloudConfigSaved);
 
         // 如果提供了邮箱和密码，尝试登录（恢复旧行为）
@@ -1668,6 +1661,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
 
       try {
         await ref.read(activeCloudRuntimeProvider.notifier).saveOnly(cfg);
+        _connectionTestResults.remove(cfg.id);
         if (mounted) showToast(context, AppLocalizations.of(context).cloudConfigSaved);
       } catch (e) {
         if (mounted) {
@@ -1723,6 +1717,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
 
       try {
         await ref.read(activeCloudRuntimeProvider.notifier).saveOnly(cfg);
+        _connectionTestResults.remove(cfg.id);
         if (mounted) showToast(context, AppLocalizations.of(context).cloudConfigSaved);
       } catch (e) {
         if (mounted) {
@@ -1825,6 +1820,7 @@ class _CloudServicePageState extends ConsumerState<CloudServicePage> {
 
       try {
         await ref.read(activeCloudRuntimeProvider.notifier).saveOnly(cfg);
+        _connectionTestResults.remove(cfg.id);
         if (mounted) showToast(context, AppLocalizations.of(context).cloudConfigSaved);
       } catch (e) {
         if (mounted) {

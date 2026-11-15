@@ -46,16 +46,16 @@ class LocalBudgetRepository implements BudgetRepository {
     // 每条新建预算分配一个 UUID,跨设备 LWW 用。syncId 在 DB schema 上允许
     // NULL,只是为了 v22 migration 对老数据兼容;新建走这里永远填。
     return await db.into(db.budgets).insert(
-      BudgetsCompanion.insert(
-        ledgerId: ledgerId,
-        type: d.Value(type),
-        categoryId: d.Value(categoryId),
-        amount: amount,
-        period: d.Value(period),
-        startDay: d.Value(startDay),
-        syncId: d.Value(_uuid.v4()),
-      ),
-    );
+          BudgetsCompanion.insert(
+            ledgerId: ledgerId,
+            type: d.Value(type),
+            categoryId: d.Value(categoryId),
+            amount: amount,
+            period: d.Value(period),
+            startDay: d.Value(startDay),
+            syncId: d.Value(_uuid.v4()),
+          ),
+        );
   }
 
   @override
@@ -78,8 +78,7 @@ class LocalBudgetRepository implements BudgetRepository {
   @override
   Future<void> deleteBudget(int id) async {
     // 先获取预算信息，判断是否为总预算
-    final budget = await (db.select(db.budgets)
-          ..where((b) => b.id.equals(id)))
+    final budget = await (db.select(db.budgets)..where((b) => b.id.equals(id)))
         .getSingleOrNull();
 
     if (budget == null) return;
@@ -99,7 +98,10 @@ class LocalBudgetRepository implements BudgetRepository {
   Future<Budget?> getTotalBudget(int ledgerId) async {
     // 使用 .get() 然后取第一个，避免多条脏数据时报错
     final budgets = await (db.select(db.budgets)
-          ..where((b) => b.ledgerId.equals(ledgerId) & b.type.equals('total') & b.enabled.equals(true))
+          ..where((b) =>
+              b.ledgerId.equals(ledgerId) &
+              b.type.equals('total') &
+              b.enabled.equals(true))
           ..orderBy([(b) => d.OrderingTerm(expression: b.createdAt)]))
         .get();
     return budgets.firstOrNull;
@@ -108,7 +110,10 @@ class LocalBudgetRepository implements BudgetRepository {
   @override
   Future<List<Budget>> getCategoryBudgets(int ledgerId) async {
     return await (db.select(db.budgets)
-          ..where((b) => b.ledgerId.equals(ledgerId) & b.type.equals('category') & b.enabled.equals(true)))
+          ..where((b) =>
+              b.ledgerId.equals(ledgerId) &
+              b.type.equals('category') &
+              b.enabled.equals(true)))
         .get();
   }
 
@@ -193,22 +198,25 @@ class LocalBudgetRepository implements BudgetRepository {
       // 分类预算：统计该分类支出（包含子分类）
       final result = await db.customSelect(
         '''
+        WITH RECURSIVE category_tree(id) AS (
+          SELECT id FROM categories WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM categories c JOIN category_tree p ON c.parent_id = p.id
+        )
         SELECT COALESCE(SUM(COALESCE(t.native_amount, t.amount)), 0) as total
         FROM transactions t
-        LEFT JOIN categories c ON t.category_id = c.id
         WHERE t.ledger_id = ?
           AND t.type = 'expense'
           AND t.exclude_from_budget = 0
           AND t.happened_at >= ?
           AND t.happened_at < ?
-          AND (t.category_id = ? OR c.parent_id = ?)
+          AND t.category_id IN (SELECT id FROM category_tree)
         ''',
         variables: [
+          d.Variable.withInt(budget.categoryId!),
           d.Variable.withInt(budget.ledgerId),
           d.Variable.withDateTime(startDate),
           d.Variable.withDateTime(endDate),
-          d.Variable.withInt(budget.categoryId!),
-          d.Variable.withInt(budget.categoryId!),
         ],
         readsFrom: {db.transactions, db.categories},
       ).getSingle();

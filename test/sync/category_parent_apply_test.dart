@@ -52,6 +52,21 @@ void main() {
     expect(child.parentId, parent);
   });
 
+  test('三级分类可通过父 syncId 关联二级父节点', () async {
+    final transport = await repo.createCategory(
+        name: '交通', kind: 'expense', syncId: 'transport');
+    final car = await repo.createSubCategory(
+        parentId: transport, name: '汽车', kind: 'expense', syncId: 'car');
+    final child = await pullChild({
+      'name': '保养',
+      'level': 3,
+      'parentSyncId': 'car',
+      'parentName': '交通',
+    });
+    expect(child.parentId, car);
+    expect(child.level, 3);
+  });
+
   test('旧协议只带名称时按同类型父级关联', () async {
     final parent = await repo.createCategory(
         name: '餐饮', kind: 'expense', syncId: 'parent');

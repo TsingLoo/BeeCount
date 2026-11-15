@@ -2,6 +2,7 @@ import 'package:drift/drift.dart' as d;
 import 'package:uuid/uuid.dart';
 
 import '../../db.dart';
+import '../../category_tree.dart';
 import '../../../cloud/sync/change_tracker.dart';
 import '../../../services/currency/rate_math.dart';
 import '../../../utils/shared_ledger_picker_filter.dart';
@@ -1328,6 +1329,9 @@ class LocalRepository extends BaseRepository {
       {String? name, String? icon, int? parentId, int? level}) async {
     final cat =
         changeTracker != null ? await _categoryRepo.getCategoryById(id) : null;
+    final descendants = changeTracker != null && parentId != null
+        ? CategoryTree(await _categoryRepo.getAllCategories()).descendantsOf(id)
+        : <Category>[];
     await _categoryRepo.updateCategory(id,
         name: name, icon: icon, parentId: parentId, level: level);
     if (cat?.syncId != null) {
@@ -1338,22 +1342,23 @@ class LocalRepository extends BaseRepository {
         action: 'update',
       );
     }
+    if (cat != null && parentId != null) {
+      for (final descendant in descendants) {
+        if (descendant.syncId == null) continue;
+        final after = await _categoryRepo.getCategoryById(descendant.id);
+        if (after?.level == descendant.level) continue;
+        await changeTracker!.recordUserGlobalChange(
+            entityType: 'category',
+            entityId: descendant.id,
+            entitySyncId: descendant.syncId!,
+            action: 'update');
+      }
+    }
   }
 
   @override
   Future<void> deleteCategory(int id) async {
-    if (changeTracker != null) {
-      final cat = await _categoryRepo.getCategoryById(id);
-      if (cat?.syncId != null) {
-        await changeTracker!.recordUserGlobalChange(
-          entityType: 'category',
-          entityId: id,
-          entitySyncId: cat!.syncId!,
-          action: 'delete',
-        );
-      }
-    }
-    await _categoryRepo.deleteCategory(id);
+    await deleteCategoriesByIds([id]);
   }
 
   @override
@@ -1366,9 +1371,13 @@ class LocalRepository extends BaseRepository {
     // 子仓库会同时删 ids 自身和 parent_id 在 ids 里的子分类,所以这里也要把
     // 子分类的 syncId 一并预查出来登记 delete change。
     await db.transaction(() async {
-      final cats = await (db.select(db.categories)
-            ..where((c) => c.id.isIn(ids) | c.parentId.isIn(ids)))
-          .get();
+      final tree = CategoryTree(await _categoryRepo.getAllCategories());
+      final allIds = <int>{...ids};
+      for (final id in ids) {
+        allIds.addAll(tree.descendantsOf(id).map((c) => c.id));
+      }
+      final cats =
+          allIds.map((id) => tree.byId[id]).whereType<Category>().toList();
       await _categoryRepo.deleteCategoriesByIds(ids);
       var recorded = 0;
       var skippedNoSyncId = 0;
@@ -1512,10 +1521,8 @@ class LocalRepository extends BaseRepository {
       //   - 目标父类下已有同名 → 子分类被合并(删除)
       //   - 没有同名 → 子分类被移动(parentId 改变)
       // 用"迁移前 vs 迁移后"对比来区分这两种情况,避免提前 hardcode 决策。
-      final fromCategory = await _categoryRepo.getCategoryById(fromCategoryId);
-      final subCategories = fromCategory?.level == 1
-          ? await _categoryRepo.getSubCategories(fromCategoryId)
-          : <Category>[];
+      final tree = CategoryTree(await _categoryRepo.getAllCategories());
+      final subCategories = tree.descendantsOf(fromCategoryId);
       final affectedCategoryIds = [
         fromCategoryId,
         ...subCategories.map((s) => s.id),
@@ -1551,7 +1558,7 @@ class LocalRepository extends BaseRepository {
             entitySyncId: sub.syncId!,
             action: 'delete',
           );
-        } else if (after.parentId != sub.parentId) {
+        } else if (after.parentId != sub.parentId || after.level != sub.level) {
           await changeTracker!.recordUserGlobalChange(
             entityType: 'category',
             entityId: sub.id,
@@ -1922,7 +1929,8 @@ class LocalRepository extends BaseRepository {
       throw StateError(resolveAppLocalizations(null).ledgerMissing);
     }
     if (ledger.isShared && ledger.myRole != 'owner') {
-      throw StateError(resolveAppLocalizations(null).sharedLedgerBalanceRestricted);
+      throw StateError(
+          resolveAppLocalizations(null).sharedLedgerBalanceRestricted);
     }
 
     final account = await getAccount(accountId);

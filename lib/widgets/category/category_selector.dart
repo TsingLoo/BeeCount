@@ -70,14 +70,19 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
         final rows = await (repo.db.select(repo.db.sharedLedgerCategories)
               ..where((t) => t.ledgerSyncId.equals(ledgerSyncId)))
             .get();
+        final bySyncId = {for (final row in rows) row.syncId: row};
         for (final s in rows) {
           if (syntheticIdForSyncId(s.syncId) == initialId) {
-            if ((s.level) == 2 &&
-                s.parentSyncId != null &&
-                s.parentSyncId!.isNotEmpty) {
-              setState(() {
-                _expandedCategoryId = syntheticIdForSyncId(s.parentSyncId!);
-              });
+            var root = s;
+            final seen = <String>{root.syncId};
+            while (root.parentSyncId != null &&
+                seen.add(root.parentSyncId!) &&
+                bySyncId.containsKey(root.parentSyncId)) {
+              root = bySyncId[root.parentSyncId]!;
+            }
+            if (root.syncId != s.syncId && mounted) {
+              setState(() =>
+                  _expandedCategoryId = syntheticIdForSyncId(root.syncId));
             }
             return;
           }
@@ -87,11 +92,15 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
     }
 
     final initialCategory = await repo.getCategoryById(initialId);
-    if (initialCategory != null && initialCategory.level == 2 && initialCategory.parentId != null) {
-      // 如果是二级分类，展开其父分类
-      setState(() {
-        _expandedCategoryId = initialCategory.parentId;
-      });
+    if (initialCategory?.parentId != null) {
+      var root = initialCategory!;
+      final seen = <int>{root.id};
+      while (root.parentId != null && seen.add(root.parentId!)) {
+        final parent = await repo.getCategoryById(root.parentId!);
+        if (parent == null) break;
+        root = parent;
+      }
+      if (mounted) setState(() => _expandedCategoryId = root.id);
     }
   }
 
@@ -147,17 +156,21 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
               WidgetsBinding.instance.addPostFrameCallback((_) async {
                 // 获取初始分类信息以确定滚动目标
                 final repo = ref.read(repositoryProvider);
-                final initialCategory = await repo.getCategoryById(widget.initialCategoryId!);
+                final initialCategory =
+                    await repo.getCategoryById(widget.initialCategoryId!);
 
                 if (initialCategory != null) {
                   int scrollTargetId;
 
                   // 如果是二级分类，滚动到父分类；否则滚动到自己
-                  if (initialCategory.level == 2 && initialCategory.parentId != null) {
-                    scrollTargetId = initialCategory.parentId!;
-                  } else {
-                    scrollTargetId = initialCategory.id;
+                  var root = initialCategory;
+                  final seen = <int>{root.id};
+                  while (root.parentId != null && seen.add(root.parentId!)) {
+                    final parent = await repo.getCategoryById(root.parentId!);
+                    if (parent == null) break;
+                    root = parent;
                   }
+                  scrollTargetId = root.id;
 
                   final key = _keys[scrollTargetId];
                   final ctx = key?.currentContext;
@@ -187,49 +200,56 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
               // 添加网格行
               displayItems.add(
                 Container(
-                  key: _keys.putIfAbsent(firstCategoryInRow.id, () => GlobalKey()),
+                  key: _keys.putIfAbsent(
+                      firstCategoryInRow.id, () => GlobalKey()),
                   child: GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: EdgeInsets.zero,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 0.9,
-                  ),
-                  itemCount: rowItems.length,
-                  itemBuilder: (context, index) {
-                    final topCat = rowItems[index];
-                    final children = subCategoriesMap[topCat.id] ?? [];
-                    final hasChildren = children.isNotEmpty;
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: EdgeInsets.zero,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 4,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 0.9,
+                    ),
+                    itemCount: rowItems.length,
+                    itemBuilder: (context, index) {
+                      final topCat = rowItems[index];
+                      final children = subCategoriesMap[topCat.id] ?? [];
+                      final hasChildren = children.isNotEmpty;
 
-                    return _CategoryItem(
-                      category: topCat,
-                      selected: _selectedId == topCat.id,
-                      hasChildren: hasChildren,
-                      expanded: _expandedCategoryId == topCat.id,
-                      onTap: () {
-                        if (hasChildren) {
-                          // 有子分类，切换展开/折叠
-                          setState(() {
-                            if (_expandedCategoryId == topCat.id) {
-                              _expandedCategoryId = null;
-                            } else {
-                              _expandedCategoryId = topCat.id;
-                            }
-                          });
-                        } else {
-                          // 无子分类，直接选中，同时关闭展开的二级分类
-                          setState(() {
-                            _selectedId = topCat.id;
-                            _expandedCategoryId = null; // 关闭展开的二级分类
-                          });
-                          widget.onCategorySelected(topCat);
-                        }
-                      },
-                    );
-                  },
+                      return Stack(children: [
+                        Positioned.fill(
+                            child: _CategoryItem(
+                          category: topCat,
+                          selected: _selectedId == topCat.id,
+                          hasChildren: hasChildren,
+                          expanded: _expandedCategoryId == topCat.id,
+                          onTap: () {
+                            setState(() {
+                              _selectedId = topCat.id;
+                            });
+                            widget.onCategorySelected(topCat);
+                          },
+                        )),
+                        if (hasChildren)
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: IconButton(
+                              tooltip: '展开子分类',
+                              icon: const Icon(Icons.chevron_right),
+                              onPressed: () => setState(() {
+                                _expandedCategoryId =
+                                    _expandedCategoryId == topCat.id
+                                        ? null
+                                        : topCat.id;
+                              }),
+                            ),
+                          ),
+                      ]);
+                    },
                   ),
                 ),
               );
@@ -248,6 +268,7 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
                     _SubcategorySelectorCard(
                       parentCategory: topCat,
                       subCategories: children,
+                      childrenByParent: subCategoriesMap,
                       selectedId: _selectedId,
                       onSubCategoryTap: (cat) {
                         setState(() => _selectedId = cat.id);
@@ -349,7 +370,11 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
     }
     final isSharedEditor = ctx?.isEditorInShared == true;
 
-    for (final cat in topLevelCategories) {
+    final pending = [...topLevelCategories];
+    final seen = <int>{};
+    while (pending.isNotEmpty) {
+      final cat = pending.removeLast();
+      if (!seen.add(cat.id)) continue;
       List<Category> children;
       if (isSharedEditor && cat.id < 0 && repo is LocalRepository) {
         children = await repo.db.getSharedSubCategoriesBySyntheticParentId(
@@ -359,6 +384,7 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
       }
       if (children.isNotEmpty) {
         result[cat.id] = children;
+        pending.addAll(children);
       }
     }
 
@@ -370,12 +396,14 @@ class _CategorySelectorState extends ConsumerState<CategorySelector> {
 class _SubcategorySelectorCard extends ConsumerWidget {
   final Category parentCategory;
   final List<Category> subCategories;
+  final Map<int, List<Category>> childrenByParent;
   final int? selectedId;
   final ValueChanged<Category> onSubCategoryTap;
 
   const _SubcategorySelectorCard({
     required this.parentCategory,
     required this.subCategories,
+    required this.childrenByParent,
     required this.selectedId,
     required this.onSubCategoryTap,
   });
@@ -401,30 +429,87 @@ class _SubcategorySelectorCard extends ConsumerWidget {
               ],
         border: isDark ? Border.all(color: BeeTokens.border(context)) : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.9,
+      child: Column(children: [
+        for (final subCat in subCategories)
+          _NestedCategoryRow(
+            category: subCat,
+            childrenByParent: childrenByParent,
+            onSelected: onSubCategoryTap,
+            selectedId: selectedId,
+            depth: 0,
           ),
-          itemCount: subCategories.length,
-          itemBuilder: (context, index) {
-            final subCat = subCategories[index];
-            return _CategoryItem(
-              category: subCat,
-              selected: selectedId == subCat.id,
-              isSubCategory: true,
-              onTap: () => onSubCategoryTap(subCat),
-            );
-          },
-        ),
-      ),
+      ]),
     );
+  }
+}
+
+class _NestedCategoryRow extends StatefulWidget {
+  const _NestedCategoryRow(
+      {required this.category,
+      required this.childrenByParent,
+      required this.onSelected,
+      required this.selectedId,
+      required this.depth});
+  final Category category;
+  final Map<int, List<Category>> childrenByParent;
+  final ValueChanged<Category> onSelected;
+  final int? selectedId;
+  final int depth;
+
+  @override
+  State<_NestedCategoryRow> createState() => _NestedCategoryRowState();
+}
+
+class _NestedCategoryRowState extends State<_NestedCategoryRow> {
+  bool expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    bool containsSelected(int id, Set<int> seen) {
+      if (!seen.add(id)) return false;
+      for (final child in widget.childrenByParent[id] ?? const <Category>[]) {
+        if (child.id == widget.selectedId || containsSelected(child.id, seen)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    expanded = containsSelected(widget.category.id, <int>{});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final children =
+        widget.childrenByParent[widget.category.id] ?? const <Category>[];
+    return Column(children: [
+      Padding(
+        padding: EdgeInsets.only(left: 12.0 + widget.depth * 16),
+        child: Row(children: [
+          Expanded(
+              child: ListTile(
+            title: Text(
+                CategoryUtils.getDisplayName(widget.category.name, context)),
+            onTap: () => widget.onSelected(widget.category),
+          )),
+          if (children.isNotEmpty)
+            IconButton(
+              tooltip: '展开子分类',
+              icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+              onPressed: () => setState(() => expanded = !expanded),
+            ),
+        ]),
+      ),
+      if (expanded)
+        for (final child in children)
+          _NestedCategoryRow(
+              category: child,
+              childrenByParent: widget.childrenByParent,
+              onSelected: widget.onSelected,
+              selectedId: widget.selectedId,
+              depth: widget.depth + 1),
+    ]);
   }
 }
 
@@ -433,8 +518,6 @@ class _CategoryItem extends StatelessWidget {
   final Category category;
   final VoidCallback onTap;
   final bool selected;
-  final bool isSubCategory;
-  final Category? parent;
   final bool hasChildren;
   final bool expanded;
 
@@ -442,8 +525,6 @@ class _CategoryItem extends StatelessWidget {
     required this.category,
     required this.onTap,
     this.selected = false,
-    this.isSubCategory = false,
-    this.parent,
     this.hasChildren = false,
     this.expanded = false,
   });
@@ -461,9 +542,8 @@ class _CategoryItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 二级分类使用较小的图标和缩进
-    final iconSize = isSubCategory ? 48.0 : 56.0;
-    final fontSize = isSubCategory ? 11.0 : 12.0;
+    const iconSize = 56.0;
+    const fontSize = 12.0;
     final primaryColor = Theme.of(context).colorScheme.primary;
 
     return InkWell(
@@ -481,19 +561,17 @@ class _CategoryItem extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: selected
                       ? primaryColor.withValues(alpha: 0.25)
-                      : isSubCategory
-                          ? BeeTokens.surfaceCategoryIconLight(context)
-                          : BeeTokens.surfaceCategoryIcon(context),
+                      : BeeTokens.surfaceCategoryIcon(context),
                   shape: BoxShape.circle,
                 ),
                 child: _buildIcon(
                   context,
-                  isSubCategory ? 20 : 24,
+                  24,
                   selected ? primaryColor : BeeTokens.iconCategory(context),
                 ),
               ),
               // 有子分类时在图标右下角显示三个点（完全分开，不重叠）
-              if (hasChildren && !isSubCategory)
+              if (hasChildren)
                 Positioned(
                   right: -6,
                   bottom: -6,
@@ -530,9 +608,7 @@ class _CategoryItem extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontSize: fontSize,
-                  color: isSubCategory
-                      ? BeeTokens.textSecondary(context)
-                      : BeeTokens.textPrimary(context),
+                  color: BeeTokens.textPrimary(context),
                 ),
           ),
         ],

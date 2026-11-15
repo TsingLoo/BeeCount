@@ -1850,16 +1850,46 @@ abstract class AppLocalizations {
   /// **'Generate Default Categories'**
   String get categoryGenerateDefault;
 
+  /// No description provided for @categoryOrganizeDefaults.
+  ///
+  /// In en, this message translates to:
+  /// **'Organize default categories'**
+  String get categoryOrganizeDefaults;
+
+  /// No description provided for @categoryOrganizeDefaultsPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Move these default categories under their related categories? Existing transactions keep their categories.'**
+  String get categoryOrganizeDefaultsPrompt;
+
+  /// No description provided for @categoryOrganizeDefaultsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No default categories need organizing.'**
+  String get categoryOrganizeDefaultsEmpty;
+
+  /// No description provided for @categoryOrganizeDefaultsDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Default categories organized'**
+  String get categoryOrganizeDefaultsDone;
+
+  /// No description provided for @categoryDirectAmount.
+  ///
+  /// In en, this message translates to:
+  /// **'Directly in this category'**
+  String get categoryDirectAmount;
+
   /// No description provided for @categoryGenerateDefaultFlat.
   ///
   /// In en, this message translates to:
-  /// **'Level 1 categories'**
+  /// **'Simple categories'**
   String get categoryGenerateDefaultFlat;
 
   /// No description provided for @categoryGenerateDefaultHierarchical.
   ///
   /// In en, this message translates to:
-  /// **'Level 2 categories'**
+  /// **'Detailed categories'**
   String get categoryGenerateDefaultHierarchical;
 
   /// No description provided for @categoryGenerateDefaultHint.
@@ -4157,19 +4187,19 @@ abstract class AppLocalizations {
   /// No description provided for @categorySubCategoryTitle.
   ///
   /// In en, this message translates to:
-  /// **'Subcategory'**
+  /// **'Place under a category'**
   String get categorySubCategoryTitle;
 
   /// No description provided for @categorySubCategoryDescriptionEnabled.
   ///
   /// In en, this message translates to:
-  /// **'This category belongs to a parent category'**
+  /// **'This category belongs to another category'**
   String get categorySubCategoryDescriptionEnabled;
 
   /// No description provided for @categorySubCategoryDescriptionDisabled.
   ///
   /// In en, this message translates to:
-  /// **'This is an independent top-level category'**
+  /// **'This category is at the top level'**
   String get categorySubCategoryDescriptionDisabled;
 
   /// No description provided for @categoryParentCategoryTitle.

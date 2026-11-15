@@ -423,13 +423,13 @@ extension SyncEngineApplyExt on SyncEngine {
       if (existing != null) {
         // 先收集自身 + 子分类的 customIconPath 清磁盘。跟 LocalCategoryRepository
         // .deleteCategory 路径对齐,防止 sync pull 下来的分类删除留下孤立图标。
-        await _cleanupCategoryIconFilesOnDisk([existing.id]);
-        // 先删子分类再删自身(跟 LocalCategoryRepository 一致)
-        await (db.delete(db.categories)
-              ..where((c) => c.parentId.equals(existing.id)))
-            .go();
-        await (db.delete(db.categories)..where((c) => c.id.equals(existing.id)))
-            .go();
+        final tree = CategoryTree(await db.select(db.categories).get());
+        final ids = <int>[
+          existing.id,
+          ...tree.descendantsOf(existing.id).map((c) => c.id)
+        ];
+        await _cleanupCategoryIconFilesOnDisk(ids);
+        await (db.delete(db.categories)..where((c) => c.id.isIn(ids))).go();
         logger.debug('SyncEngine', 'pull: 删除分类 $syncId');
       }
       return;
@@ -454,18 +454,16 @@ extension SyncEngineApplyExt on SyncEngine {
     if (parentSyncId != null && parentSyncId.isNotEmpty) {
       final parent = await (db.select(db.categories)
             ..where((c) => c.syncId.equals(parentSyncId))
-            ..where((c) => c.kind.equals(kind))
-            ..where((c) => c.level.equals(1)))
+            ..where((c) => c.kind.equals(kind)))
           .getSingleOrNull();
       if (parent?.id != existing?.id) parentId = parent?.id;
     } else if (parentName != null && parentName.isNotEmpty) {
       final parent = await (db.select(db.categories)
             ..where((c) => c.name.equals(parentName))
-            ..where((c) => c.kind.equals(kind))
-            ..where((c) => c.level.equals(1)))
+            ..where((c) => c.kind.equals(kind)))
           .getSingleOrNull();
       parentId = parent?.id;
-    } else if (level == 2 &&
+    } else if (level > 1 &&
         !payload.containsKey('parentSyncId') &&
         !payload.containsKey('parentName')) {
       parentId = existing?.parentId;
@@ -1044,20 +1042,27 @@ extension SyncEngineApplyExt on SyncEngine {
         // Web 移除前面的图片或复用同一文件重新上传时，身份可以保持不变，
         // 但顺序/原始名称/尺寸仍可能更新。缺失字段兼容旧端，不清空本地值。
         final originalName = attMap.containsKey('originalName')
-            ? attMap['originalName'] as String? : ex.originalName;
+            ? attMap['originalName'] as String?
+            : ex.originalName;
         final fileSize = attMap.containsKey('fileSize')
-            ? attMap['fileSize'] as int? : ex.fileSize;
-        final width = attMap.containsKey('width')
-            ? attMap['width'] as int? : ex.width;
-        final height = attMap.containsKey('height')
-            ? attMap['height'] as int? : ex.height;
+            ? attMap['fileSize'] as int?
+            : ex.fileSize;
+        final width =
+            attMap.containsKey('width') ? attMap['width'] as int? : ex.width;
+        final height =
+            attMap.containsKey('height') ? attMap['height'] as int? : ex.height;
         final sortOrder = attMap['sortOrder'] as int? ?? ex.sortOrder;
         final nextFileId = cloudFileId ?? ex.cloudFileId;
         final nextSha = cloudFileId != null && cloudFileId != ex.cloudFileId
-            ? cloudSha256 : cloudSha256 ?? ex.cloudSha256;
-        if (ex.cloudFileId != nextFileId || ex.cloudSha256 != nextSha ||
-            ex.originalName != originalName || ex.fileSize != fileSize ||
-            ex.width != width || ex.height != height || ex.sortOrder != sortOrder) {
+            ? cloudSha256
+            : cloudSha256 ?? ex.cloudSha256;
+        if (ex.cloudFileId != nextFileId ||
+            ex.cloudSha256 != nextSha ||
+            ex.originalName != originalName ||
+            ex.fileSize != fileSize ||
+            ex.width != width ||
+            ex.height != height ||
+            ex.sortOrder != sortOrder) {
           updates.add((
             id: ex.id,
             data: TransactionAttachmentsCompanion(

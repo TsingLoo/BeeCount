@@ -971,10 +971,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get categoryGenerateDefault => 'Generate Default Categories';
 
   @override
-  String get categoryGenerateDefaultFlat => 'Level 1 categories';
+  String get categoryOrganizeDefaults => 'Organize default categories';
 
   @override
-  String get categoryGenerateDefaultHierarchical => 'Level 2 categories';
+  String get categoryOrganizeDefaultsPrompt => 'Move these default categories under their related categories? Existing transactions keep their categories.';
+
+  @override
+  String get categoryOrganizeDefaultsEmpty => 'No default categories need organizing.';
+
+  @override
+  String get categoryOrganizeDefaultsDone => 'Default categories organized';
+
+  @override
+  String get categoryDirectAmount => 'Directly in this category';
+
+  @override
+  String get categoryGenerateDefaultFlat => 'Simple categories';
+
+  @override
+  String get categoryGenerateDefaultHierarchical => 'Detailed categories';
 
   @override
   String get categoryGenerateDefaultHint => 'Existing categories are kept. Default categories with matching names are skipped.';
@@ -2201,13 +2216,13 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get categorySubCategoryTitle => 'Subcategory';
+  String get categorySubCategoryTitle => 'Place under a category';
 
   @override
-  String get categorySubCategoryDescriptionEnabled => 'This category belongs to a parent category';
+  String get categorySubCategoryDescriptionEnabled => 'This category belongs to another category';
 
   @override
-  String get categorySubCategoryDescriptionDisabled => 'This is an independent top-level category';
+  String get categorySubCategoryDescriptionDisabled => 'This category is at the top level';
 
   @override
   String get categoryParentCategoryTitle => 'Parent Category';

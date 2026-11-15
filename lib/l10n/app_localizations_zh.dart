@@ -971,10 +971,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String get categoryGenerateDefault => '生成默认分类';
 
   @override
-  String get categoryGenerateDefaultFlat => '一级分类';
+  String get categoryOrganizeDefaults => '整理默认分类';
 
   @override
-  String get categoryGenerateDefaultHierarchical => '二级分类';
+  String get categoryOrganizeDefaultsPrompt => '将以下默认分类移到对应大类下？已有账目仍保留原分类。';
+
+  @override
+  String get categoryOrganizeDefaultsEmpty => '没有需要整理的默认分类';
+
+  @override
+  String get categoryOrganizeDefaultsDone => '默认分类已整理';
+
+  @override
+  String get categoryDirectAmount => '直接记在此分类';
+
+  @override
+  String get categoryGenerateDefaultFlat => '精简分类';
+
+  @override
+  String get categoryGenerateDefaultHierarchical => '详细分类';
 
   @override
   String get categoryGenerateDefaultHint => '已有分类会保留，同名的默认分类会跳过。';
@@ -2201,13 +2216,13 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get categorySubCategoryTitle => '二级分类';
+  String get categorySubCategoryTitle => '作为子分类';
 
   @override
-  String get categorySubCategoryDescriptionEnabled => '此分类属于某个一级分类';
+  String get categorySubCategoryDescriptionEnabled => '此分类属于另一个分类';
 
   @override
-  String get categorySubCategoryDescriptionDisabled => '此分类为独立的一级分类';
+  String get categorySubCategoryDescriptionDisabled => '此分类位于最顶层';
 
   @override
   String get categoryParentCategoryTitle => '父分类';
@@ -9672,10 +9687,25 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get categoryGenerateDefault => '產生預設分類';
 
   @override
-  String get categoryGenerateDefaultFlat => '一級分類';
+  String get categoryOrganizeDefaults => '整理預設分類';
 
   @override
-  String get categoryGenerateDefaultHierarchical => '二級分類';
+  String get categoryOrganizeDefaultsPrompt => '將以下預設分類移到對應大類底下？現有帳目仍保留原分類。';
+
+  @override
+  String get categoryOrganizeDefaultsEmpty => '沒有需要整理的預設分類';
+
+  @override
+  String get categoryOrganizeDefaultsDone => '預設分類已整理';
+
+  @override
+  String get categoryDirectAmount => '直接記在此分類';
+
+  @override
+  String get categoryGenerateDefaultFlat => '精簡分類';
+
+  @override
+  String get categoryGenerateDefaultHierarchical => '詳細分類';
 
   @override
   String get categoryGenerateDefaultHint => '現有分類會保留，同名的預設分類會略過。';
@@ -10902,13 +10932,13 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   }
 
   @override
-  String get categorySubCategoryTitle => '二級分類';
+  String get categorySubCategoryTitle => '作為子分類';
 
   @override
-  String get categorySubCategoryDescriptionEnabled => '此分類屬於某個一級分類';
+  String get categorySubCategoryDescriptionEnabled => '此分類屬於另一個分類';
 
   @override
-  String get categorySubCategoryDescriptionDisabled => '此分類為獨立的一級分類';
+  String get categorySubCategoryDescriptionDisabled => '此分類位於最上層';
 
   @override
   String get categoryParentCategoryTitle => '父分類';

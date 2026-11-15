@@ -47,7 +47,8 @@ class CategoryPackageService {
 
     for (final category in categories) {
       String? parentName;
-      if (category.parentId != null && categoryMap.containsKey(category.parentId)) {
+      if (category.parentId != null &&
+          categoryMap.containsKey(category.parentId)) {
         parentName = categoryMap[category.parentId]!.name;
       }
 
@@ -64,7 +65,8 @@ class CategoryPackageService {
         item['parent_name'] = parentName;
       }
 
-      if (category.customIconPath != null && category.customIconPath!.isNotEmpty) {
+      if (category.customIconPath != null &&
+          category.customIconPath!.isNotEmpty) {
         item['custom_icon_path'] = category.customIconPath;
         // 提取文件名
         final fileName = path.basename(category.customIconPath!);
@@ -73,7 +75,8 @@ class CategoryPackageService {
         }
       }
 
-      if (category.communityIconId != null && category.communityIconId!.isNotEmpty) {
+      if (category.communityIconId != null &&
+          category.communityIconId!.isNotEmpty) {
         item['community_icon_id'] = category.communityIconId;
       }
 
@@ -89,7 +92,8 @@ class CategoryPackageService {
 
     final yamlContent = _toYaml(config);
     final yamlBytes = utf8.encode(yamlContent);
-    archive.addFile(ArchiveFile('categories.yaml', yamlBytes.length, yamlBytes));
+    archive
+        .addFile(ArchiveFile('categories.yaml', yamlBytes.length, yamlBytes));
 
     logger.info(_tag, '已添加配置文件: ${categories.length} 个分类');
 
@@ -102,7 +106,8 @@ class CategoryPackageService {
         final file = File('${iconDir.path}/$fileName');
         if (await file.exists()) {
           final bytes = await file.readAsBytes();
-          archive.addFile(ArchiveFile('custom_icons/$fileName', bytes.length, bytes));
+          archive.addFile(
+              ArchiveFile('custom_icons/$fileName', bytes.length, bytes));
           logger.debug(_tag, '已添加图标: $fileName');
         } else {
           logger.warning(_tag, '图标文件不存在: $fileName');
@@ -115,7 +120,8 @@ class CategoryPackageService {
     // 5. 压缩并保存
     final zipData = ZipEncoder().encode(archive);
     if (zipData == null) {
-      throw Exception(resolveAppLocalizations(null).categoryPackageCompressFailed);
+      throw Exception(
+          resolveAppLocalizations(null).categoryPackageCompressFailed);
     }
 
     final outputFile = File(outputPath);
@@ -152,7 +158,8 @@ class CategoryPackageService {
     final config = loadYaml(yamlContent);
 
     if (config is! Map) {
-      throw Exception(resolveAppLocalizations(null).categoryPackageInvalidFormat);
+      throw Exception(
+          resolveAppLocalizations(null).categoryPackageInvalidFormat);
     }
 
     final version = config['version'] as int? ?? 1;
@@ -165,7 +172,8 @@ class CategoryPackageService {
 
     // 2. 解压自定义图标到临时目录
     final tempDir = await getTemporaryDirectory();
-    final extractDir = Directory('${tempDir.path}/category_import_${DateTime.now().millisecondsSinceEpoch}');
+    final extractDir = Directory(
+        '${tempDir.path}/category_import_${DateTime.now().millisecondsSinceEpoch}');
     await extractDir.create(recursive: true);
 
     final iconMapping = <String, String>{}; // 旧路径 -> 新路径
@@ -246,7 +254,8 @@ class CategoryPackageService {
       }
 
       String? customIconPath = item['custom_icon_path'] as String?;
-      if (customIconPath != null && newIconMapping.containsKey(customIconPath)) {
+      if (customIconPath != null &&
+          newIconMapping.containsKey(customIconPath)) {
         customIconPath = newIconMapping[customIconPath];
       }
 
@@ -271,7 +280,9 @@ class CategoryPackageService {
       for (var c in updatedCategories) '${c.name.toLowerCase()}|${c.kind}': c.id
     };
 
-    // 导入二级分类
+    // 父节点先于后代导入。
+    level2Items.sort(
+        (a, b) => (a['level'] as int? ?? 2).compareTo(b['level'] as int? ?? 2));
     for (final item in level2Items) {
       final name = item['name'] as String;
       final kind = item['kind'] as String? ?? 'expense';
@@ -282,8 +293,9 @@ class CategoryPackageService {
 
       // 父分类与子分类同 kind,按 (parentName, kind) 查父 id
       final parentName = item['parent_name'] as String?;
-      final parentId =
-          parentName != null ? keyToId['${parentName.toLowerCase()}|$kind'] : null;
+      final parentId = parentName != null
+          ? keyToId['${parentName.toLowerCase()}|$kind']
+          : null;
 
       if (parentId == null) {
         logger.warning(_tag, '找不到父分类: $parentName, 跳过 $name');
@@ -292,23 +304,39 @@ class CategoryPackageService {
       }
 
       String? customIconPath = item['custom_icon_path'] as String?;
-      if (customIconPath != null && newIconMapping.containsKey(customIconPath)) {
+      if (customIconPath != null &&
+          newIconMapping.containsKey(customIconPath)) {
         customIconPath = newIconMapping[customIconPath];
       }
 
-      await repository.insertCategory(CategoriesCompanion.insert(
+      final insertedId =
+          await repository.insertCategory(CategoriesCompanion.insert(
         name: name,
         kind: kind,
         icon: Value(item['icon'] as String?),
         sortOrder: Value(item['sort_order'] as int? ?? 0),
         parentId: Value(parentId),
-        level: const Value(2),
+        level: Value(item['level'] as int? ?? 2),
         iconType: Value(item['icon_type'] as String? ?? 'material'),
         customIconPath: Value(customIconPath),
         communityIconId: Value(item['community_icon_id'] as String?),
       ));
       imported++;
       existingKeys.add('${name.toLowerCase()}|$kind');
+      keyToId['${name.toLowerCase()}|$kind'] = insertedId;
+    }
+
+    for (final item in level2Items) {
+      final name = item['name'] as String;
+      final kind = item['kind'] as String? ?? 'expense';
+      final parentName = item['parent_name'] as String?;
+      final id = keyToId['${name.toLowerCase()}|$kind'];
+      final parentId = parentName == null
+          ? null
+          : keyToId['${parentName.toLowerCase()}|$kind'];
+      if (id != null && parentId != null && id != parentId) {
+        await repository.updateCategory(id, parentId: parentId);
+      }
     }
 
     // 6. 清理临时目录
@@ -318,7 +346,8 @@ class CategoryPackageService {
       logger.warning(_tag, '清理临时目录失败: $e');
     }
 
-    logger.info(_tag, '导入完成: imported=$imported, skipped=$skipped, icons=$iconsImported');
+    logger.info(_tag,
+        '导入完成: imported=$imported, skipped=$skipped, icons=$iconsImported');
 
     return CategoryImportResult(
       imported: imported,

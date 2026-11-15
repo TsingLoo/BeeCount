@@ -84,11 +84,12 @@ extension SharedLedgerPickerFilter on BeeDatabase {
     if (kind != null && kind.isNotEmpty) {
       q.where((t) => t.kind.equals(kind));
     }
-    if (topLevelOnly) {
-      q.where((t) => t.level.equals(1));
-    }
     final shared = await q.get();
-    return shared.map(_sharedCategoryAsMain).toList();
+    return shared
+        .where((c) =>
+            !topLevelOnly || c.parentSyncId == null || c.parentSyncId!.isEmpty)
+        .map(_sharedCategoryAsMain)
+        .toList();
   }
 
   /// 共享账本下,根据 synthetic 父分类 id 反查 level=2 子分类。
@@ -294,4 +295,3 @@ extension SharedLedgerPickerFilter on BeeDatabase {
     return null;
   }
 }
-

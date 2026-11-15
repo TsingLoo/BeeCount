@@ -1,7 +1,8 @@
 import 'package:drift/drift.dart' as d;
 import '../data/db.dart';
 import '../data/repositories/base_repository.dart';
-import '../data/repositories/transaction_repository.dart' show BatchAttachmentData;
+import '../data/repositories/transaction_repository.dart'
+    show BatchAttachmentData;
 import 'currency/rate_math.dart';
 import 'system/logger_service.dart';
 
@@ -130,6 +131,7 @@ class ImportData {
 
   /// 账本名称（可选，用于更新账本信息）
   final String? ledgerName;
+
   /// 货币（可选，用于更新账本信息）
   final String? currency;
 
@@ -224,10 +226,8 @@ class DataImportService {
 
   /// 导入账户(全局按名称去重)。public — sync_diff_service 也复用,避免维护两套。
   Future<Map<String, int>> importAccounts(
-    BaseRepository repo,
-    List<ImportAccount> accounts,
-    {String defaultCurrency = 'CNY'}
-  ) async {
+      BaseRepository repo, List<ImportAccount> accounts,
+      {String defaultCurrency = 'CNY'}) async {
     final accountNameToId = <String, int>{};
 
     if (accounts.isEmpty) return accountNameToId;
@@ -277,22 +277,16 @@ class DataImportService {
 
     try {
       // 获取所有现有分类
-      final existingExpense = await repo.getTopLevelCategories('expense');
-      final existingIncome = await repo.getTopLevelCategories('income');
+      final existingCategories = await repo.getAllCategories();
       final existingCategoryMap = <String, int>{};
-
-      for (final cat in [...existingExpense, ...existingIncome]) {
+      for (final cat in existingCategories) {
         existingCategoryMap['${cat.kind}|${cat.name}'] = cat.id;
-        // 获取子分类
-        final subCats = await repo.getSubCategories(cat.id);
-        for (final sub in subCats) {
-          existingCategoryMap['${sub.kind}|${sub.name}'] = sub.id;
-        }
       }
 
       // 分离一级和二级分类
-      final level1 = categories.where((c) => c.level == 1 || c.parentName == null).toList();
-      final level2 = categories.where((c) => c.level == 2 && c.parentName != null).toList();
+      final level1 = categories.where((c) => c.parentName == null).toList();
+      final level2 = categories.where((c) => c.parentName != null).toList()
+        ..sort((a, b) => a.level.compareTo(b.level));
 
       // 导入一级分类
       for (final cat in level1) {
@@ -322,11 +316,15 @@ class DataImportService {
         }
       }
 
-      // 导入二级分类
+      // 按深度依次导入所有后代分类。
       for (final cat in level2) {
         final key = '${cat.kind}|${cat.name}';
         if (existingCategoryMap.containsKey(key)) {
           categoryCache[key] = existingCategoryMap[key]!;
+          final parentId = categoryCache['${cat.kind}|${cat.parentName}'];
+          if (parentId != null) {
+            await repo.updateCategory(categoryCache[key]!, parentId: parentId);
+          }
         } else {
           // 查找父分类ID
           final parentKey = '${cat.kind}|${cat.parentName}';
@@ -340,6 +338,7 @@ class DataImportService {
               sortOrder: cat.sortOrder,
             );
             categoryCache[key] = id;
+            created++;
 
             // 如果有自定义图标信息，更新图标
             if (cat.iconType != null && cat.iconType != 'material') {
@@ -436,17 +435,15 @@ class DataImportService {
     int failed = 0;
     int processed = 0;
     final total = transactions.length;
-    logger.info('TxImport',
-        '开始导入交易: $total 条 (recordChanges=$recordChanges)');
+    logger.info('TxImport', '开始导入交易: $total 条 (recordChanges=$recordChanges)');
 
     // v30 交易级多币种(02 §六导入修补):批量预取本位币/账户币种/有效汇率,
     // 逐条填 currencyCode + nativeAmount,不再落 NULL(NULL 行 L11 检测
     // 需 join 兜底,且外币账户导入折算会静默 1:1)。
     final ledger = await repo.getLedgerById(ledgerId);
-    final ledgerBase = ((ledger?.currency.isNotEmpty ?? false)
-            ? ledger!.currency
-            : 'CNY')
-        .toUpperCase();
+    final ledgerBase =
+        ((ledger?.currency.isNotEmpty ?? false) ? ledger!.currency : 'CNY')
+            .toUpperCase();
     final accountCurrencyById = <int, String>{
       for (final a in await repo.getAllAccounts())
         a.id: (a.currency.isNotEmpty ? a.currency : ledgerBase).toUpperCase(),
@@ -573,11 +570,10 @@ class DataImportService {
 
       // v30:交易币种 = CSV 币种列(显式,反馈10)?? 账户币种 ?? 本位币;
       // 折算快照同币种 = amount,外币按有效汇率,取不到 = amount(L11 可捞回)。
-      final txCurrency = ((tx.currencyCode?.isNotEmpty ?? false)
-              ? tx.currencyCode!
-              : null) ??
-          (accountId != null ? accountCurrencyById[accountId] : null) ??
-          ledgerBase;
+      final txCurrency =
+          ((tx.currencyCode?.isNotEmpty ?? false) ? tx.currencyCode! : null) ??
+              (accountId != null ? accountCurrencyById[accountId] : null) ??
+              ledgerBase;
       final txNative = txCurrency == ledgerBase
           ? tx.amount
           : (computeNativeAmount(

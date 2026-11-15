@@ -971,10 +971,25 @@ class AppLocalizationsKo extends AppLocalizations {
   String get categoryGenerateDefault => '기본 카테고리 생성';
 
   @override
-  String get categoryGenerateDefaultFlat => '1단계 카테고리';
+  String get categoryOrganizeDefaults => '기본 카테고리 정리';
 
   @override
-  String get categoryGenerateDefaultHierarchical => '2단계 카테고리';
+  String get categoryOrganizeDefaultsPrompt => '다음 기본 카테고리를 관련 상위 카테고리 아래로 이동할까요? 기존 거래의 카테고리는 유지됩니다.';
+
+  @override
+  String get categoryOrganizeDefaultsEmpty => '정리할 기본 카테고리가 없습니다.';
+
+  @override
+  String get categoryOrganizeDefaultsDone => '기본 카테고리를 정리했습니다.';
+
+  @override
+  String get categoryDirectAmount => '이 카테고리에 직접 기록';
+
+  @override
+  String get categoryGenerateDefaultFlat => '간단한 카테고리';
+
+  @override
+  String get categoryGenerateDefaultHierarchical => '상세 카테고리';
 
   @override
   String get categoryGenerateDefaultHint => '기존 카테고리는 유지하고 이름이 같은 기본 카테고리는 건너뜁니다.';
@@ -2201,13 +2216,13 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
-  String get categorySubCategoryTitle => '하위 카테고리';
+  String get categorySubCategoryTitle => '다른 카테고리 아래에 배치';
 
   @override
-  String get categorySubCategoryDescriptionEnabled => '이 카테고리는 상위 카테고리에 속합니다';
+  String get categorySubCategoryDescriptionEnabled => '이 카테고리는 다른 카테고리에 속합니다';
 
   @override
-  String get categorySubCategoryDescriptionDisabled => '이 카테고리는 독립적인 최상위 카테고리입니다';
+  String get categorySubCategoryDescriptionDisabled => '이 카테고리는 최상위에 있습니다';
 
   @override
   String get categoryParentCategoryTitle => '상위 카테고리';

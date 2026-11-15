@@ -197,9 +197,15 @@ final class LocalAgentTransactionSummaryDataSource {
       var icon = row.read<String?>('category_icon');
       if (categoryLevel == 'top' && categoryId != null) {
         final category = categories[categoryId];
-        final parent = category?.parentId == null
-            ? category
-            : categories[category!.parentId];
+        var parent = category;
+        final seen = <int>{};
+        while (parent?.parentId != null && seen.add(parent!.id)) {
+          parent = categories[parent.parentId] ?? parent;
+          if (parent.parentId != null &&
+              !categories.containsKey(parent.parentId)) {
+            break;
+          }
+        }
         if (parent != null) {
           categoryId = parent.id;
           name = parent.name;

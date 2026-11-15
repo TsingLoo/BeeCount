@@ -9,6 +9,7 @@ import '../../providers.dart';
 import '../../widgets/ui/ui.dart';
 import '../../widgets/biz/category_selector_dialog.dart';
 import '../../data/db.dart' as db;
+import '../../data/category_tree.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/category_utils.dart';
 import '../../styles/tokens.dart';
@@ -94,7 +95,7 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
     // 初始化二级分类状态
     if (widget.category != null) {
       // 编辑模式：根据现有分类设置
-      _isSubCategory = widget.category!.level == 2;
+      _isSubCategory = widget.category!.parentId != null;
       if (_isSubCategory && widget.category!.parentId != null) {
         _loadParentCategory(widget.category!.parentId!);
       }
@@ -194,6 +195,20 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
             showBack: true,
             actions: isEditing && widget.category != null
                 ? [
+                    IconButton(
+                      onPressed: () async {
+                        await Navigator.of(context)
+                            .push<void>(MaterialPageRoute(
+                          builder: (_) => CategoryEditPage(
+                            kind: widget.kind,
+                            parentCategory: widget.category,
+                          ),
+                        ));
+                      },
+                      icon: const Icon(Icons.add),
+                      tooltip:
+                          AppLocalizations.of(context).categorySubCategoryTitle,
+                    ),
                     // 分类详情按钮
                     IconButton(
                       onPressed: () {
@@ -266,7 +281,7 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
                               .categorySubCategoryDescriptionDisabled),
                       value: _isSubCategory,
                       // 从添加二级分类入口进来 或 编辑模式时不允许修改层级
-                      onChanged: (widget.parentCategory != null || isEditing)
+                      onChanged: widget.parentCategory != null
                           ? null
                           : (value) => _onSubCategoryToggle(value),
                     ),
@@ -476,8 +491,7 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
           widget.category!.id,
           name: name,
           icon: _selectedIcon,
-          // 二级分类可以修改父分类
-          parentId: _isSubCategory ? _selectedParentCategory?.id : null,
+          parentId: _isSubCategory ? _selectedParentCategory?.id : -1,
         );
 
         // 更新图标信息
@@ -577,9 +591,10 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
     int totalTransactionCount =
         await repo.getTransactionCountByCategory(widget.category!.id);
 
-    // 如果是一级分类，还需要检查所有子分类的交易数量
-    if (widget.category!.level == 1) {
-      final subCategories = await repo.getSubCategories(widget.category!.id);
+    // 删除节点前检查整棵子树的交易。
+    {
+      final tree = CategoryTree(await repo.getAllCategories());
+      final subCategories = tree.descendantsOf(widget.category!.id);
       for (final subCat in subCategories) {
         final subCount = await repo.getTransactionCountByCategory(subCat.id);
         totalTransactionCount += subCount;
@@ -886,24 +901,22 @@ class _CategoryEditPageState extends ConsumerState<CategoryEditPage> {
   void _selectParentCategory() async {
     final repo = ref.read(repositoryProvider);
     final l10n = AppLocalizations.of(context);
+    final tree = CategoryTree(await repo.getAllCategories());
+    if (!mounted) return;
+    final excluded = <int>[
+      if (widget.category != null) widget.category!.id,
+      if (widget.category != null)
+        ...tree.descendantsOf(widget.category!.id).map((c) => c.id),
+    ];
 
     final selected = await showCategorySelector(
       context,
       type: widget.kind,
       currentCategoryId: _selectedParentCategory?.id,
-      onlyTopLevel: true,
+      excludeIds: excluded,
       showTransactionCount: true,
       includeParentCategories: true, // 有子分类的一级分类可选
       title: l10n.categorySelectParentTitle,
-      categoryFilter: (category) async {
-        // 可选条件：有子分类 OR 没有交易记录
-        final hasSubCategories = await repo.hasSubCategories(category.id);
-        if (hasSubCategories) return true;
-
-        final transactionCount =
-            await repo.getTransactionCountByCategory(category.id);
-        return transactionCount == 0;
-      },
     );
 
     if (selected != null && mounted) {

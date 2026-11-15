@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/db.dart';
+import '../../data/category_tree.dart';
 import '../../data/repositories/local/local_repository.dart';
 import '../../providers.dart';
 import '../../styles/tokens.dart';
@@ -88,10 +89,12 @@ class CategorySelectorDialog extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<CategorySelectorDialog> createState() => _CategorySelectorDialogState();
+  ConsumerState<CategorySelectorDialog> createState() =>
+      _CategorySelectorDialogState();
 }
 
-class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog> {
+class _CategorySelectorDialogState
+    extends ConsumerState<CategorySelectorDialog> {
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   Map<int, int> _transactionCounts = {};
@@ -120,23 +123,9 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
   Future<List<Category>> _loadAllCategories() async {
     final repo = ref.read(repositoryProvider);
 
-    // 获取收入和支出分类
-    final incomeCategories = await repo.getTopLevelCategories('income');
-    final expenseCategories = await repo.getTopLevelCategories('expense');
-
-    // 获取所有二级分类
-    var allCategories = <Category>[];
-    allCategories.addAll(incomeCategories);
-    allCategories.addAll(expenseCategories);
-
-    // 如果只显示一级分类，不加载子分类
-    if (!widget.onlyTopLevel) {
-      // 为每个一级分类获取子分类(主表路径,共享账本场景下面 filter 会替换)
-      for (final category in [...incomeCategories, ...expenseCategories]) {
-        final subs = await repo.getSubCategories(category.id);
-        allCategories.addAll(subs);
-      }
-    }
+    var allCategories = (await repo.getAllCategories())
+        .where((c) => c.kind == 'income' || c.kind == 'expense')
+        .toList();
 
     // §7 共享账本 picker 过滤:Editor + 共享账本 → 走 SharedLedger* 表(下游
     // _buildCategoryGroups 仍按 widget.type 二次过滤,所以这里 topLevelOnly=
@@ -145,6 +134,9 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
       final ctx = await repo.db.loadLedgerPickerContext(widget.ledgerId);
       allCategories = await repo.db
           .filterCategoriesForLedger(allCategories, ctx, topLevelOnly: false);
+    }
+    if (widget.onlyTopLevel) {
+      allCategories = allCategories.where((c) => c.parentId == null).toList();
     }
 
     // 如果有过滤器，计算每个分类的可选状态
@@ -169,7 +161,9 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
       final repo = ref.read(repositoryProvider);
 
       // 获取交易（ledgerId 可选，不传则获取所有账本）
-      final transactions = await repo.transactionsWithCategoryAll(ledgerId: widget.ledgerId).first;
+      final transactions = await repo
+          .transactionsWithCategoryAll(ledgerId: widget.ledgerId)
+          .first;
 
       // 统计每个分类的笔数
       final counts = <int, int>{};
@@ -187,108 +181,6 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
     } catch (e) {
       // 忽略错误
     }
-  }
-
-  /// 构建分类分组数据
-  List<_CategoryGroup> _buildCategoryGroups(List<Category> allCategories) {
-    // all 模式用于跨收支类型的分类筛选，其他模式保持按类型筛选。
-    final typedCategories = widget.type == 'all'
-        ? allCategories
-        : allCategories.where((c) => c.kind == widget.type).toList();
-
-    // 应用排除规则
-    final filteredCategories = typedCategories.where((c) {
-      // 排除指定ID
-      if (widget.excludeIds?.contains(c.id) ?? false) return false;
-
-      // 排除指定名称
-      if (widget.excludeNames?.contains(c.name) ?? false) return false;
-
-      return true;
-    }).toList();
-
-    // 分离父分类和子分类
-    final parentCategories = <Category>[];
-    final childCategories = <Category>[];
-    final parentIds = <int>{};
-
-    // 第一轮：找出所有父分类
-    for (final category in filteredCategories) {
-      if (category.parentId != null) {
-        parentIds.add(category.parentId!);
-        childCategories.add(category);
-      }
-    }
-
-    // 第二轮：获取所有父分类
-    for (final category in filteredCategories) {
-      if (category.parentId == null) {
-        parentCategories.add(category);
-      }
-    }
-
-    // 构建分组
-    final groups = <_CategoryGroup>[];
-
-    for (final parent in parentCategories) {
-      final hasChildren = parentIds.contains(parent.id);
-      final children = childCategories
-          .where((c) => c.parentId == parent.id)
-          .toList();
-
-      // 判断父分类是否可选
-      bool isParentSelectable = !hasChildren || widget.includeParentCategories;
-      // 如果有过滤器，应用过滤器结果
-      if (widget.categoryFilter != null && _categoryFilterResults.containsKey(parent.id)) {
-        isParentSelectable = isParentSelectable && _categoryFilterResults[parent.id]!;
-      }
-
-      // 应用搜索过滤
-      if (_searchText.isNotEmpty) {
-        final parentName = CategoryUtils.getDisplayName(parent.name, context).toLowerCase();
-        final parentMatches = parentName.contains(_searchText);
-
-        final matchedChildren = children.where((c) {
-          final childName = CategoryUtils.getDisplayName(c.name, context).toLowerCase();
-          return childName.contains(_searchText);
-        }).toList();
-
-        // 如果父分类匹配，显示所有子分类
-        if (parentMatches) {
-          groups.add(_CategoryGroup(
-            parent: parent,
-            children: children,
-            isExpanded: true,
-            isParentSelectable: isParentSelectable,
-          ));
-        } else if (matchedChildren.isNotEmpty) {
-          // 如果只有子分类匹配，只显示匹配的子分类
-          groups.add(_CategoryGroup(
-            parent: parent,
-            children: matchedChildren,
-            isExpanded: true,
-            isParentSelectable: isParentSelectable,
-          ));
-        }
-      } else {
-        // 无搜索时，显示所有
-        // 判断是否需要展开：如果当前选中的是子分类且属于该父分类，则展开
-        bool shouldExpand = widget.expandChildrenByDefault;
-        if (widget.currentCategoryId != null && !shouldExpand) {
-          // 检查是否有子分类被选中
-          shouldExpand = children.any((c) => c.id == widget.currentCategoryId);
-        }
-
-        groups.add(_CategoryGroup(
-          parent: parent,
-          children: children,
-          isExpanded: shouldExpand,
-          isParentSelectable: isParentSelectable,
-        ));
-      }
-    }
-
-    return groups;
   }
 
   @override
@@ -312,29 +204,31 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
-        children: [
-          // 顶部栏
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: BeeTokens.surfaceElevated(context),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-              border: Border(
-                bottom: BorderSide(
-                  color: BeeTokens.divider(context),
-                  width: 0.5,
+          children: [
+            // 顶部栏
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: BeeTokens.surfaceElevated(context),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)),
+                border: Border(
+                  bottom: BorderSide(
+                    color: BeeTokens.divider(context),
+                    width: 0.5,
+                  ),
                 ),
               ),
-            ),
-            child: Column(
+              child: Column(
                 children: [
                   Row(
                     children: [
                       Expanded(
                         child: Text(
-                          widget.title ?? (widget.type == 'income'
-                              ? l10n.categoryIncome
-                              : l10n.categoryExpense),
+                          widget.title ??
+                              (widget.type == 'income'
+                                  ? l10n.categoryIncome
+                                  : l10n.categoryExpense),
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -393,161 +287,201 @@ class _CategorySelectorDialogState extends ConsumerState<CategorySelectorDialog>
                 ],
               ),
             ),
-          // 分类列表
-          Expanded(
-            child: FutureBuilder<List<Category>>(
-              future: _loadAllCategories(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+            // 分类列表
+            Expanded(
+              child: FutureBuilder<List<Category>>(
+                future: _loadAllCategories(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                final groups = _buildCategoryGroups(snapshot.data!);
+                  final categories = snapshot.data!
+                      .where(
+                          (c) => widget.type == 'all' || c.kind == widget.type)
+                      .where(
+                          (c) => !(widget.excludeIds?.contains(c.id) ?? false))
+                      .where((c) =>
+                          !(widget.excludeNames?.contains(c.name) ?? false))
+                      .toList();
+                  final tree = CategoryTree(categories);
+                  final roots = categories
+                      .where((c) =>
+                          c.parentId == null ||
+                          !tree.byId.containsKey(c.parentId))
+                      .toList()
+                    ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+                  final groups = roots
+                      .where((root) =>
+                          _searchText.isEmpty ||
+                          CategoryUtils.getDisplayName(root.name, context)
+                              .toLowerCase()
+                              .contains(_searchText) ||
+                          tree.descendantsOf(root.id).any((c) =>
+                              CategoryUtils.getDisplayName(c.name, context)
+                                  .toLowerCase()
+                                  .contains(_searchText)))
+                      .toList();
 
-                if (groups.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.search_off,
-                          size: 64,
-                          color: BeeTokens.textTertiary(context),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchText.isNotEmpty
-                              ? l10n.searchNoResults
-                              : l10n.categoryEmpty,
-                          style: TextStyle(
+                  if (groups.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.search_off,
+                            size: 64,
                             color: BeeTokens.textTertiary(context),
-                            fontSize: 16,
                           ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: groups.length,
-                  itemBuilder: (context, index) {
-                    final group = groups[index];
-                    return _CategoryGroupItem(
-                      group: group,
-                      currentCategoryId: widget.currentCategoryId,
-                      showTransactionCount: widget.showTransactionCount,
-                      transactionCounts: _transactionCounts,
-                      primaryColor: ref.watch(primaryColorProvider),
-                      onCategorySelected: (category) {
-                        Navigator.pop(context, category);
-                      },
+                          const SizedBox(height: 16),
+                          Text(
+                            _searchText.isNotEmpty
+                                ? l10n.searchNoResults
+                                : l10n.categoryEmpty,
+                            style: TextStyle(
+                              color: BeeTokens.textTertiary(context),
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
                     );
-                  },
-                );
-              },
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: groups.length,
+                    itemBuilder: (context, index) {
+                      final root = groups[index];
+                      return _TreeCategoryRow(
+                        key: ValueKey(root.id),
+                        category: root,
+                        tree: tree,
+                        searchText: _searchText,
+                        depth: 0,
+                        filterResults: _categoryFilterResults,
+                        expandByDefault: widget.expandChildrenByDefault,
+                        currentCategoryId: widget.currentCategoryId,
+                        showTransactionCount: widget.showTransactionCount,
+                        transactionCounts: _transactionCounts,
+                        primaryColor: ref.watch(primaryColorProvider),
+                        onCategorySelected: (category) {
+                          Navigator.pop(context, category);
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
         ),
       ),
     );
   }
 }
 
-/// 分类分组数据
-class _CategoryGroup {
-  final Category parent;
-  final List<Category> children;
-  final bool isExpanded;
-  final bool isParentSelectable;
+class _TreeCategoryRow extends StatefulWidget {
+  const _TreeCategoryRow(
+      {super.key,
+      required this.category,
+      required this.tree,
+      required this.searchText,
+      required this.depth,
+      required this.filterResults,
+      required this.expandByDefault,
+      required this.currentCategoryId,
+      required this.showTransactionCount,
+      required this.transactionCounts,
+      required this.primaryColor,
+      required this.onCategorySelected});
 
-  _CategoryGroup({
-    required this.parent,
-    required this.children,
-    this.isExpanded = false,
-    required this.isParentSelectable,
-  });
-}
-
-/// 分类分组项组件
-class _CategoryGroupItem extends StatefulWidget {
-  final _CategoryGroup group;
+  final Category category;
+  final CategoryTree tree;
+  final String searchText;
+  final int depth;
+  final Map<int, bool> filterResults;
+  final bool expandByDefault;
   final int? currentCategoryId;
   final bool showTransactionCount;
   final Map<int, int> transactionCounts;
   final Color primaryColor;
-  final Function(Category) onCategorySelected;
-
-  const _CategoryGroupItem({
-    required this.group,
-    this.currentCategoryId,
-    required this.showTransactionCount,
-    required this.transactionCounts,
-    required this.primaryColor,
-    required this.onCategorySelected,
-  });
+  final ValueChanged<Category> onCategorySelected;
 
   @override
-  State<_CategoryGroupItem> createState() => _CategoryGroupItemState();
+  State<_TreeCategoryRow> createState() => _TreeCategoryRowState();
 }
 
-class _CategoryGroupItemState extends State<_CategoryGroupItem> {
-  bool _isExpanded = false;
+class _TreeCategoryRowState extends State<_TreeCategoryRow> {
+  bool expanded = false;
 
   @override
   void initState() {
     super.initState();
-    _isExpanded = widget.group.isExpanded;
+    expanded = widget.expandByDefault ||
+        widget.tree
+            .descendantsOf(widget.category.id)
+            .any((c) => c.id == widget.currentCategoryId);
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasChildren = widget.group.children.isNotEmpty;
-    final isParentSelectable = widget.group.isParentSelectable;
-
-    return Column(
-      children: [
-        // 父分类
-        _CategoryTile(
-          category: widget.group.parent,
-          isSelected: widget.currentCategoryId == widget.group.parent.id,
-          showTransactionCount: widget.showTransactionCount,
-          transactionCount: widget.transactionCounts[widget.group.parent.id] ?? 0,
-          primaryColor: widget.primaryColor,
-          isParent: hasChildren,
-          isExpanded: _isExpanded,
-          isSelectable: isParentSelectable,
-          onTap: () {
-            if (hasChildren) {
-              // 如果有子分类，总是展开/收起
-              setState(() {
-                _isExpanded = !_isExpanded;
-              });
-            } else if (isParentSelectable) {
-              // 如果是可选的普通分类（无子分类），则选择
-              widget.onCategorySelected(widget.group.parent);
-            }
-          },
-        ),
-        // 子分类（如果展开）
-        if (hasChildren && _isExpanded)
-          ...widget.group.children.map((child) {
-            return _CategoryTile(
-              category: child,
-              isSelected: widget.currentCategoryId == child.id,
-              showTransactionCount: widget.showTransactionCount,
-              transactionCount: widget.transactionCounts[child.id] ?? 0,
-              primaryColor: widget.primaryColor,
-              isChild: true,
-              onTap: () {
-                widget.onCategorySelected(child);
-              },
-            );
-          }),
-      ],
-    );
+    final children = widget.tree.childrenOf(widget.category.id);
+    final searching = widget.searchText.isNotEmpty;
+    final visibleChildren = searching
+        ? children
+            .where((child) =>
+                CategoryUtils.getDisplayName(child.name, context)
+                    .toLowerCase()
+                    .contains(widget.searchText) ||
+                widget.tree.descendantsOf(child.id).any((c) =>
+                    CategoryUtils.getDisplayName(c.name, context)
+                        .toLowerCase()
+                        .contains(widget.searchText)))
+            .toList()
+        : children;
+    return Column(children: [
+      Padding(
+        padding: EdgeInsets.only(left: widget.depth * 16.0),
+        child: Row(children: [
+          Expanded(
+              child: _CategoryTile(
+            category: widget.category,
+            isSelected: widget.currentCategoryId == widget.category.id,
+            showTransactionCount: widget.showTransactionCount,
+            transactionCount: widget.transactionCounts[widget.category.id] ?? 0,
+            primaryColor: widget.primaryColor,
+            isChild: widget.depth > 0,
+            isSelectable: widget.filterResults[widget.category.id] ?? true,
+            onTap: () => widget.onCategorySelected(widget.category),
+          )),
+          if (children.isNotEmpty)
+            IconButton(
+              tooltip: '展开子分类',
+              icon: Icon(expanded || searching
+                  ? Icons.expand_less
+                  : Icons.expand_more),
+              onPressed: () => setState(() => expanded = !expanded),
+            ),
+        ]),
+      ),
+      if (expanded || searching)
+        for (final child in visibleChildren)
+          _TreeCategoryRow(
+            key: ValueKey(child.id),
+            category: child,
+            tree: widget.tree,
+            searchText: widget.searchText,
+            depth: widget.depth + 1,
+            filterResults: widget.filterResults,
+            expandByDefault: widget.expandByDefault,
+            currentCategoryId: widget.currentCategoryId,
+            showTransactionCount: widget.showTransactionCount,
+            transactionCounts: widget.transactionCounts,
+            primaryColor: widget.primaryColor,
+            onCategorySelected: widget.onCategorySelected,
+          ),
+    ]);
   }
 }
 
@@ -558,9 +492,7 @@ class _CategoryTile extends StatelessWidget {
   final bool showTransactionCount;
   final int transactionCount;
   final Color primaryColor;
-  final bool isParent;
   final bool isChild;
-  final bool isExpanded;
   final bool isSelectable;
   final VoidCallback onTap;
 
@@ -570,9 +502,7 @@ class _CategoryTile extends StatelessWidget {
     required this.showTransactionCount,
     required this.transactionCount,
     required this.primaryColor,
-    this.isParent = false,
     this.isChild = false,
-    this.isExpanded = false,
     this.isSelectable = true,
     required this.onTap,
   });
@@ -583,15 +513,13 @@ class _CategoryTile extends StatelessWidget {
     final opacity = !isSelectable ? 0.5 : 1.0;
 
     return InkWell(
-      onTap: isSelectable || isParent ? onTap : null, // 不可选且非父分类时禁用点击
+      onTap: isSelectable ? onTap : null,
       child: Opacity(
         opacity: opacity,
         child: Container(
           decoration: BoxDecoration(
             // 选中状态背景色（通栏）
-            color: isSelected
-                ? primaryColor.withValues(alpha: 0.08)
-                : null,
+            color: isSelected ? primaryColor.withValues(alpha: 0.08) : null,
             border: Border(
               bottom: BorderSide(
                 color: BeeTokens.divider(context),
@@ -602,7 +530,7 @@ class _CategoryTile extends StatelessWidget {
           child: Padding(
             // 子分类添加左边距，父分类正常边距
             padding: EdgeInsets.fromLTRB(
-              isChild ? 56 : 16,  // 左边距：子分类56，父分类16
+              isChild ? 56 : 16, // 左边距：子分类56，父分类16
               12,
               16,
               12,
@@ -648,13 +576,15 @@ class _CategoryTile extends StatelessWidget {
                 // 交易笔数
                 if (showTransactionCount && transactionCount > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: BeeTokens.surface(context),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      AppLocalizations.of(context).tagTransactionCount(transactionCount),
+                      AppLocalizations.of(context)
+                          .tagTransactionCount(transactionCount),
                       style: TextStyle(
                         fontSize: 12,
                         color: BeeTokens.textSecondary(context),
@@ -672,14 +602,6 @@ class _CategoryTile extends StatelessWidget {
                     ),
                   ),
                 // 展开/收起图标（父分类总是显示）
-                if (isParent)
-                  Padding(
-                    padding: EdgeInsets.only(left: isSelected ? 0 : 8),
-                    child: Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: BeeTokens.iconSecondary(context),
-                    ),
-                  ),
               ],
             ),
           ),

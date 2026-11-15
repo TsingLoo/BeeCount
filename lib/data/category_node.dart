@@ -12,7 +12,7 @@ class CategoryNode {
   });
 
   bool get hasChildren => children.isNotEmpty;
-  bool get isTopLevel => category.level == 1;
+  bool get isTopLevel => category.parentId == null;
 }
 
 /// 分类层级构建器
@@ -25,7 +25,7 @@ class CategoryHierarchy {
     final subCategories = <int, List<Category>>{}; // parentId -> children
 
     for (final cat in allCategories) {
-      if (cat.level == 1 || cat.parentId == null) {
+      if (cat.parentId == null) {
         topLevel.add(cat);
       } else if (cat.parentId != null) {
         subCategories.putIfAbsent(cat.parentId!, () => []).add(cat);
@@ -50,9 +50,7 @@ class CategoryHierarchy {
 
   /// 获取所有一级分类（不包含子分类）
   static List<Category> getTopLevelOnly(List<Category> allCategories) {
-    return allCategories
-        .where((c) => c.level == 1 || c.parentId == null)
-        .toList()
+    return allCategories.where((c) => c.parentId == null).toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
   }
 
@@ -61,9 +59,7 @@ class CategoryHierarchy {
     List<Category> allCategories,
     int parentId,
   ) {
-    return allCategories
-        .where((c) => c.parentId == parentId)
-        .toList()
+    return allCategories.where((c) => c.parentId == parentId).toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
   }
 
@@ -80,15 +76,7 @@ class CategoryHierarchy {
   /// 3. 分类兜底选择
   static List<Category> getUsableCategories(List<Category> allCategories) {
     // 找出所有作为父分类的 ID
-    final parentIds = allCategories
-        .where((c) => c.parentId != null)
-        .map((c) => c.parentId!)
-        .toSet();
-
-    // 过滤出可用分类：不是父分类的分类
-    return allCategories
-        .where((c) => !parentIds.contains(c.id))
-        .toList()
+    return allCategories.toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
   }
 

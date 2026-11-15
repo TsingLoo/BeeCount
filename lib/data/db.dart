@@ -99,7 +99,7 @@ class Categories extends Table {
       integer().withDefault(const Constant(0))(); // 排序顺序，数字越小越靠前
   IntColumn get parentId => integer().nullable()(); // 父分类ID，null 表示一级分类
   IntColumn get level =>
-      integer().withDefault(const Constant(1))(); // 层级：1=一级，2=二级
+      integer().withDefault(const Constant(1))(); // 缓存深度：根为 1，子节点逐级加 1
   // v13: 自定义图标支持
   TextColumn get iconType => text().withDefault(
       const Constant('material'))(); // material / custom / community
